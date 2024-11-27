@@ -17,6 +17,7 @@ import torch as th
 from torch import nn
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -26,8 +27,8 @@ class Args:
 
     problem_id: str = "airfoil2d_v0"
     """Problem identifier."""
-    exp_name: str = os.path.basename(__file__)[: -len(".py")]
-    """The name of this experiment (default: name of this file)."""
+    algo: str = os.path.basename(__file__)[: -len(".py")]
+    """The name of this algorithm."""
 
     # Tracking
     track: bool = True
@@ -116,7 +117,7 @@ if __name__ == "__main__":
     design_shape = problem.design_space.shape
 
     # Logging
-    run_name = f"{args.problem_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
         wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=vars(args), save_code=True, name=run_name)
 
