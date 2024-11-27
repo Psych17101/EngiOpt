@@ -36,8 +36,6 @@ class Args:
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
-    save_model: bool = False
-    """Save the model."""
     seed: int = 1
     """Random seed."""
 
