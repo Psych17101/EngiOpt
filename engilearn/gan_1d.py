@@ -17,6 +17,7 @@ import torch as th
 from torch import nn
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -38,6 +39,8 @@ class Args:
     """Wandb entity name."""
     seed: int = 1
     """Random seed."""
+    save_model: bool = False
+    """Saves the model to disk."""
 
     # Algorithm specific
     n_epochs: int = 200
@@ -110,6 +113,7 @@ if __name__ == "__main__":
     args = tyro.cli(Args)
 
     problem = all_problems[args.problem_id].build()
+    problem.reset(seed=args.seed)
 
     design_shape = problem.design_space.shape
 
@@ -196,12 +200,17 @@ if __name__ == "__main__":
             d_loss.backward()
             optimizer_discriminator.step()
 
+            # ----------
+            #  Logging
+            # ----------
             if args.track:
+                batches_done = epoch * len(dataloader) + i
                 wandb.log(
                     {
                         "d_loss": d_loss.item(),
                         "g_loss": g_loss.item(),
                         "epoch": epoch,
+                        "batch": batches_done,
                     }
                 )
                 print(
@@ -209,7 +218,6 @@ if __name__ == "__main__":
                 )
 
                 # This saves a grid image of 25 generated designs every sample_interval
-                batches_done = epoch * len(dataloader) + i
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
                     tensors = gen_designs.data[:25]
@@ -227,12 +235,39 @@ if __name__ == "__main__":
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 
-                    # Turn off axes for empty plots if num_tensors is not a perfect square
-                    for j in range(25, len(axes)):
-                        axes[j].axis("off")
-
                     plt.tight_layout()
                     img_fname = f"images/{batches_done}.png"
                     plt.savefig(img_fname)
                     plt.close()
                     wandb.log({"designs": wandb.Image(img_fname)})
+
+                    # --------------
+                    #  Save models
+                    # --------------
+                    if args.save_model:
+                        ckpt_gen = {
+                            "epoch": epoch,
+                            "batches_done": batches_done,
+                            "generator": generator.state_dict(),
+                            "optimizer_generator": optimizer_generator.state_dict(),
+                            "loss": g_loss.item(),
+                        }
+                        ckpt_disc = {
+                            "epoch": epoch,
+                            "batches_done": batches_done,
+                            "discriminator": discriminator.state_dict(),
+                            "optimizer_discriminator": optimizer_discriminator.state_dict(),
+                            "loss": d_loss.item(),
+                        }
+
+                        th.save(ckpt_gen, "generator.pth")
+                        th.save(ckpt_disc, "discriminator.pth")
+                        artifact_gen = wandb.Artifact("generator", type="model")
+                        artifact_gen.add_file("generator.pth")
+                        artifact_disc = wandb.Artifact("discriminator", type="model")
+                        artifact_disc.add_file("discriminator.pth")
+
+                        wandb.log_artifact(artifact_gen)
+                        wandb.log_artifact(artifact_disc)
+
+    wandb.finish()
