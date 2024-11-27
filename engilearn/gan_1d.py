@@ -208,8 +208,7 @@ if __name__ == "__main__":
                     }
                 )
                 print(
-                    "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]"
-                    % (epoch, args.n_epochs, i, len(dataloader), d_loss.item(), g_loss.item())
+                    f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] [D loss: {d_loss.item()}] [G loss: {g_loss.item()}]"
                 )
 
                 # This saves a grid image of 25 generated designs every sample_interval
