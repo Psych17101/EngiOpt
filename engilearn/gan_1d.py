@@ -171,6 +171,7 @@ if __name__ == "__main__":
 
             # -----------------
             #  Train Generator
+            # min log(1 - D(G(z))) <==> max log(D(G(z)))
             # -----------------
             optimizer_generator.zero_grad()
 
@@ -188,6 +189,7 @@ if __name__ == "__main__":
 
             # ---------------------
             #  Train Discriminator
+            # max log(D(real)) + log(1 - D(G(z)))
             # ---------------------
             optimizer_discriminator.zero_grad()
 
