@@ -18,7 +18,6 @@ import numpy as np
 import torch as th
 import tqdm
 import tyro
-
 import wandb
 
 
@@ -120,7 +119,7 @@ if __name__ == "__main__":
         for i, data in enumerate(dataloader):
             # THIS IS PROBLEM DEPENDENT
             designs = data["optimized"]
-            designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs
+            designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs to a batch of 1D tensors with 1 channel
 
             # Learning
             optimizer.zero_grad()
