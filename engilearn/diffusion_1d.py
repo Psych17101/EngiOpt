@@ -57,6 +57,8 @@ class Args:
     """number of objectives -- used as conditional input"""
     sample_interval: int = 400
     """interval between image samples"""
+    auto_norm: bool = False
+    """Automatically normalize the data when learning."""
 
 
 if __name__ == "__main__":
@@ -98,6 +100,7 @@ if __name__ == "__main__":
     diffusion = GaussianDiffusion1D(
         model,
         seq_length=np.prod(design_shape),
+        auto_normalize=args.auto_norm,
     ).to(device)
 
     # Configure data loader
@@ -146,7 +149,7 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
-                        design = tensor.view(*design_shape)  # deflattens designs
+                        design = tensor.view(*design_shape)  # deflattens design
                         x, y = design.cpu()  # Extract x and y coordinates
                         axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
                         axes[j].set_xlim(-0.1, 1.1)  # Adjust x-axis limits
