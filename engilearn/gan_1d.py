@@ -56,8 +56,6 @@ class Args:
     """number of cpu threads to use during batch generation"""
     latent_dim: int = 100
     """dimensionality of the latent space"""
-    img_size: int = 28
-    """size of each image dimension"""
     sample_interval: int = 400
     """interval between image samples"""
 

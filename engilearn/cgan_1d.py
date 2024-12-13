@@ -59,8 +59,6 @@ class Args:
     """dimensionality of the latent space"""
     n_objs: int = 2
     """number of objectives -- used as conditional input"""
-    img_size: int = 28
-    """size of each image dimension"""
     sample_interval: int = 400
     """interval between image samples"""
 
