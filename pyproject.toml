@@ -30,6 +30,7 @@ dependencies = [
     "wandb >= 0.18.7",
     "tqdm >= 4.67.1",
     "matplotlib >= 3.9.2",
+    "denoising_diffusion_pytorch"
 ]
 dynamic = ["version"]
 
