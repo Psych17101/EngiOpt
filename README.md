@@ -11,7 +11,4 @@ As much as we can, we follow the [CleanRL](https://github.com/vwxyzjn/cleanrl) p
 
 
 ## Wishlist
-- [ ] BezierGAN, CGAN, DCGAN, InfoGAN (images)
-- [ ] Diffusion Models (images), Diffusion Models (vector)
-- [ ] Surrogate Models and Optimization
-- [ ] Metrics implementations
+see https://github.com/IDEALLab/EngiBench/issues/4
