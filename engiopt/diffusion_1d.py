@@ -33,7 +33,7 @@ class Args:
     # Tracking
     track: bool = True
     """Track the experiment with wandb."""
-    wandb_project: str = "engilearn"
+    wandb_project: str = "engiopt"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""

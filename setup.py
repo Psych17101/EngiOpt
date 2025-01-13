@@ -7,7 +7,7 @@ CWD = pathlib.Path(__file__).absolute().parent
 
 def get_version():
     """Gets the current version of the lib (avoids double sourcing in code and pyproject.toml)."""
-    path = CWD / "engilearn" / "__init__.py"
+    path = CWD / "engiopt" / "__init__.py"
     content = path.read_text()
     for line in content.splitlines():
         if line.startswith("__version__"):
@@ -15,4 +15,4 @@ def get_version():
     raise RuntimeError("bad version data in __init__.py")
 
 
-setup(name="engilearn", version=get_version(), long_description=open("README.md").read())
+setup(name="engiopt", version=get_version(), long_description=open("README.md").read())
