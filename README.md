@@ -9,6 +9,20 @@ As much as we can, we follow the [CleanRL](https://github.com/vwxyzjn/cleanrl) p
 * Logging: we use experiment tracking tools like [Weights & Biases](https://wandb.ai/site) to log the results of our experiments.
 * Reproducibility: we pin all the versions used in the experiment to ensure reproducibility. We also seed all the random number generators.
 
+## Install
+1. Install EngiBench from source:
+```
+git clone git@github.com:IDEALLab/EngiBench.git
+cd engibench
+pip install -e ".[all]"
+```
+2. Install EngiOpt dependencies:
+```
+cd ../engiopt
+pip install -e .
+```
+
+
 
 ## Wishlist
 see https://github.com/IDEALLab/EngiBench/issues/4
