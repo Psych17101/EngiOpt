@@ -12,12 +12,13 @@ import time
 
 from denoising_diffusion_pytorch import GaussianDiffusion1D
 from denoising_diffusion_pytorch import Unet1D
-from engibench.utils.all_problems import all_problems
+from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -64,7 +65,7 @@ class Args:
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
-    problem = all_problems[args.problem_id].build()
+    problem = BUILTIN_PROBLEMS[args.problem_id].build()
     problem.reset(seed=args.seed)
 
     design_shape = problem.design_space.shape

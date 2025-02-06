@@ -10,13 +10,14 @@ import os
 import random
 import time
 
-from engibench.utils.all_problems import all_problems
+from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -109,7 +110,7 @@ class Discriminator(nn.Module):
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
-    problem = all_problems[args.problem_id].build()
+    problem = BUILTIN_PROBLEMS[args.problem_id].build()
     problem.reset(seed=args.seed)
 
     design_shape = problem.design_space.shape

@@ -19,13 +19,13 @@ repos:
       - id: debug-statements
         exclude: .*/templates/
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.3.0
+    rev: v2.4.1
     hooks:
       - id: codespell
         args:
           - --ignore-words-list=mor,le,te
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.2
+    rev: v0.9.4
     hooks:
       - id: ruff
         args: ["--fix"]
