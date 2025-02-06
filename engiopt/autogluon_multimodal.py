@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Single-file AutoGluon multi-modality training script.
 
@@ -23,8 +22,10 @@ import pandas as pd
 import wandb
 import tyro
 from autogluon.tabular import TabularPredictor
-from autogluon.vision import ImagePredictor, ObjectDetector
-from autogluon.text import TextPredictor
+#from autogluon.vision import ImagePredictor, ObjectDetector
+#from autogluon.text import TextPredictor
+
+from distutils.util import strtobool
 
 
 @dataclass
@@ -59,17 +60,17 @@ class Args:
     problem_type: str | None = None
 
     # Tracking
-    track: bool = True
+    track: str = "True"
     wandb_project: str = "engiopt"
     wandb_entity: str | None = None
     seed: int = 1
-    save_model: bool = False
+    save_model: str = "False"
 
     # AutoGluon-specific
     time_limit: int = 3600
     presets: str = "high_quality"
     eval_metric: str | None = None
-    enable_gpu: bool = False
+    enable_gpu: str = "False"
 
 
 def set_seed(seed: int) -> None:
@@ -141,7 +142,7 @@ def main(args: Args) -> None:
 
     # 3. Initialize Weights & Biases if requested
     wandb_run = None
-    if args.track:
+    if bool(strtobool(args.track)):
         wandb_run = wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,
@@ -154,22 +155,25 @@ def main(args: Args) -> None:
     predictor = None
     if args.modality == "tabular":
         # Read CSV, train tabular predictor
+        print(args.train_data_path)
         train_data = pd.read_csv(args.train_data_path)
         predictor = TabularPredictor(
-            label=args.label,
-            problem_type=args.problem_type,
-            eval_metric=args.eval_metric
+        label=args.label,
+        problem_type=args.problem_type,
+        eval_metric=args.eval_metric
         ).fit(
             train_data=train_data,
             time_limit=args.time_limit,
             presets=args.presets,
-            ag_args_fit={"num_gpus": 1 if args.enable_gpu else 0},
-            random_seed=args.seed,
-        )
+            ag_args_fit={
+                "num_gpus": 1 if args.enable_gpu else 0,
+                "random_seed": args.seed  # This line is corrected
+            },
+        )   
         # Log results
         leaderboard = predictor.leaderboard(silent=True)
         print(leaderboard)
-        if args.track and wandb_run is not None:
+        if bool(strtobool(args.track)) and wandb_run is not None:
             wandb.log({"leaderboard": wandb.Table(dataframe=leaderboard)})
 
     elif args.modality == "image":
@@ -177,14 +181,14 @@ def main(args: Args) -> None:
         predictor = ImagePredictor(path=args.train_data_path)
         predictor.fit(time_limit=args.time_limit, presets=args.presets)
         # Log fit summary
-        if args.track and wandb_run is not None:
+        if bool(strtobool(args.track)) and wandb_run is not None:
             wandb.log(predictor.fit_summary())
 
     elif args.modality == "object_detection":
         # Train object detector
         predictor = ObjectDetector()
         predictor.fit(train_path=args.train_data_path, time_limit=args.time_limit)
-        if args.track and wandb_run is not None:
+        if bool(strtobool(args.track)) and wandb_run is not None:
             wandb.log(predictor.fit_summary())
 
     elif args.modality == "text":
@@ -201,17 +205,17 @@ def main(args: Args) -> None:
         )
 
     # 5. & 6. Saving model if requested
-    if predictor is not None and args.save_model:
+    if predictor is not None and bool(strtobool(args.save_model)):
         model_dir = f"{args.modality}_model"
         predictor.save(model_dir)
         # Log model artifact
-        if args.track and wandb_run is not None:
+        if bool(strtobool(args.track)) and wandb_run is not None:
             artifact = wandb.Artifact(f"{args.modality}_model", type="model")
             artifact.add_dir(model_dir)
             wandb.log_artifact(artifact)
 
     # 7. End the W&B run if tracking was enabled
-    if args.track and wandb_run is not None:
+    if bool(strtobool(args.track)) and wandb_run is not None:
         wandb.finish()
 
 
