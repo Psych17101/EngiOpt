@@ -24,7 +24,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d_v0"
+    problem_id: str = "airfoil2d"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -109,7 +109,7 @@ class Discriminator(nn.Module):
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
-    problem = BUILTIN_PROBLEMS[args.problem_id].build()
+    problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
     design_shape = problem.design_space.shape

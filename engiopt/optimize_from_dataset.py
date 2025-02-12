@@ -12,7 +12,7 @@ import tyro
 class Args:
     """Command-line arguments."""
 
-    problem: str = "airfoil2d_v0"
+    problem: str = "airfoil2d"
     """Problem identifier."""
     seed: int = 1
     """Random seed."""
@@ -22,7 +22,7 @@ class Args:
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
-    problem: Problem = BUILTIN_PROBLEMS[args.problem].build()
+    problem: Problem = BUILTIN_PROBLEMS[args.problem]()
     problem.reset(seed=args.seed)
 
     candidate_design = np.array(problem.dataset["test"]["initial"][0])
