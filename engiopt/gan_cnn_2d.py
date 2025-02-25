@@ -14,6 +14,7 @@ from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
+import torchvision.transforms as transforms
 from torch import nn
 import tqdm
 import tyro
@@ -60,49 +61,160 @@ class Args:
     """interval between image samples"""
 
 class Generator(nn.Module):
-    def __init__(self):
-        super(Generator, self).__init__()
+    def __init__(self, latent_dim=100, out_channels=1, g_features=64):
+        """Generator for 100x100 images.
 
-        def block(in_feat, out_feat, normalize=True):
-            layers = [nn.Linear(in_feat, out_feat)]
-            if normalize:
-                layers.append(nn.BatchNorm1d(out_feat, 0.8))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
+        Args:
+            latent_dim (int): Dimensionality of the latent code (z).
+            out_channels (int): Number of channels in the output image.
+            g_features (int): Base number of generator feature maps.
+        """
+        super().__init__()
 
-        self.model = nn.Sequential(
-            *block(args.latent_dim, 128, normalize=False),
-            *block(128, 256),
-            *block(256, 512),
-            *block(512, 1024),
-            nn.Linear(1024, int(np.prod(design_shape))),
+        self.init_size = 25  # We'll create a 25x25 feature map after the first FC
+        self.fc = nn.Linear(latent_dim, g_features * 4 * self.init_size * self.init_size)
+
+        self.conv_blocks = nn.Sequential(
+            # (g_features*4, 25, 25) -> (g_features*2, 50, 50)
+            nn.ConvTranspose2d(
+                in_channels=g_features * 4,
+                out_channels=g_features * 2,
+                kernel_size=4,
+                stride=2,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(g_features * 2),
+            nn.ReLU(True),
+
+            # (g_features*2, 50, 50) -> (g_features, 100, 100)
+            nn.ConvTranspose2d(
+                in_channels=g_features * 2,
+                out_channels=g_features,
+                kernel_size=4,
+                stride=2,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(g_features),
+            nn.ReLU(True),
+
+            # (g_features, 100, 100) -> (out_channels, 100, 100)
+            nn.ConvTranspose2d(
+                in_channels=g_features,
+                out_channels=out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False
+            ),
             nn.Tanh()
         )
 
     def forward(self, z):
-        img = self.model(z)
-        img = img.view(img.size(0), *design_shape)
+        # z: (batch, latent_dim)
+        out = self.fc(z)  # (batch, g_features*4*25*25)
+        out = out.view(out.size(0), -1, self.init_size, self.init_size)
+        img = self.conv_blocks(out)  # (batch, out_channels, 100, 100)
         return img
 
 
 class Discriminator(nn.Module):
-    def __init__(self):
-        super(Discriminator, self).__init__()
 
-        self.model = nn.Sequential(
-            nn.Linear(int(np.prod(design_shape)), 512),
+    def __init__(self, in_channels=1, d_features=64):
+        super().__init__()
+
+        """
+        Discriminator for 100x100 images.
+
+        Args:
+            in_channels (int): Number of channels in the input image.
+            d_features (int): Base number of discriminator feature maps.
+        """
+        self.conv_blocks = nn.Sequential(
+            # 100 x 100 -> 50 x 50
+            nn.Conv2d(
+                in_channels,
+                d_features,
+                kernel_size=4,
+                stride=2,
+                padding=1,
+                bias=False
+            ),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
+
+            # 50 x 50 -> 25 x 25
+            nn.Conv2d(
+                d_features,
+                d_features * 2,
+                kernel_size=4,
+                stride=2,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(d_features * 2),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 1),
-            nn.Sigmoid(),
+
+            # 25 x 25 -> 13 x 13
+            nn.Conv2d(
+                d_features * 2,
+                d_features * 4,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(d_features * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # 13 x 13 -> 7 x 7
+            nn.Conv2d(
+                d_features * 4,
+                d_features * 8,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(d_features * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # 7 x 7 -> 1 x 1
+            nn.Conv2d(
+                d_features * 8,
+                1,
+                kernel_size=7,
+                stride=1,
+                padding=0,
+                bias=False
+            )
         )
 
-    def forward(self, img):
-        img_flat = img.view(img.size(0), -1)
-        validity = self.model(img_flat)
+        # Final output activation
+        self.output_act = nn.Sigmoid()
 
+    def forward(self, img):
+        # img: (batch, in_channels, 100, 100)
+        out = self.conv_blocks(img)  
+        # out: (batch, 1, 1, 1)
+        out = out.view(out.size(0), -1)  # flatten to (batch, 1)
+        validity = self.output_act(out)
         return validity
+
+
+# Define the tensor transformation - resizing the images to 100x100
+resize_transform = transforms.Resize((100, 100))
+def resize_images(images_tensor):
+    """Resizes the images in a 4D PyTorch tensor to 100x100 pixels.
+
+    Args:
+    images_tensor (torch.Tensor): A tensor of shape (n, c, x, y).
+
+    Returns:
+    torch.Tensor: A tensor of the same shape with x and y dimensions resized to 100x100.
+    """
+    resized_images = th.stack([resize_transform(img) for img in images_tensor])
+    return resized_images
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -151,6 +263,7 @@ if __name__ == "__main__":
             filtered_ds.append(training_ds[i]['xPrint'])
     training_ds = th.stack(filtered_ds)
     training_ds = training_ds.reshape(training_ds.shape[0], 1, 100, 50)
+    training_ds = resize_images(training_ds)
     # print(training_ds.shape)
     dataloader = th.utils.data.DataLoader(
         training_ds,
@@ -232,7 +345,7 @@ if __name__ == "__main__":
                     # Plot each tensor as a iamge plot
                     for j, tensor in enumerate(tensors):
                         img = tensor.cpu()  # Extract x and y coordinates
-                        axes[j].imshow(img.reshape(100,50))  # image plot
+                        axes[j].imshow(img[0])  # image plot
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 
