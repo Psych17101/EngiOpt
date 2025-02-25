@@ -48,7 +48,7 @@ class Args:
     # -----------------
     # Data & Columns
     # -----------------
-    data_dir: str = "./kiwi"
+    data_dir: str = "./data"
     """Directory where the data file resides. The script will create it if needed."""
     data_input: str = "airfoil_data.csv"
     """Name of the data file (CSV or Parquet). We'll join this with data_dir."""
@@ -100,7 +100,7 @@ class Args:
     # Logging & Repro
     # -----------------
     track: bool = True
-    wandb_project: str = "engiopt"
+    wandb_project: str = "ann_tabular_regression"
     wandb_entity: Optional[str] = None
     seed: int = 42
     save_model: bool = False
@@ -113,7 +113,7 @@ class Args:
     # -----------------
     # Output Directory
     # -----------------
-    model_output_dir: str = "models"
+    model_output_dir: str = "results"
     """Directory where we save the best model and loss curve plot."""
 
     def __post_init__(self):
