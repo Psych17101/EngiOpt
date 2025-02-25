@@ -1,1 +1,0 @@
-{"epoch":199,"batch":2399,"_timestamp":1.7381566677761664e+09,"_runtime":312.024991808,"_step":2405,"loss":0.003560395445674658,"designs":{"format":"png","width":1200,"height":1200,"_type":"image-file","sha256":"e66f170b50ac3c042cfb8c00ca52ce3cf8fb17a8fff16e5d6c0c9e01f43244f4","size":94456,"path":"media/images/designs_2006_e66f170b50ac3c042cfb.png"},"_wandb":{"runtime":312}}
