@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
+import torchvision.transforms as transforms
 import tqdm
 import tyro
 import wandb
@@ -43,7 +44,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 200
+    n_epochs: int = 1000
     """number of epochs of training"""
     batch_size: int = 64
     """size of the batches"""
@@ -57,7 +58,7 @@ class Args:
     """number of cpu threads to use during batch generation"""
     latent_dim: int = 100
     """dimensionality of the latent space"""
-    n_objs: int = 2
+    n_objs: int = 7
     """number of objectives -- used as conditional input"""
     sample_interval: int = 400
     """interval between image samples"""
@@ -122,7 +123,7 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
-    design_shape = problem.design_space.shape
+    design_shape = (10000, )
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -156,8 +157,14 @@ if __name__ == "__main__":
     adversarial_loss.to(device)
 
     # Configure data loader
-    training_ds = th.tensor(np.load('/home/nathanielhoffman/Desktop/fake_dataset_2D/y.npy')).float().to(device)
-    print(training_ds.shape)
+    training_ds = problem.dataset.with_format("torch", device=device)["train"]
+    filtered_ds = th.zeros(len(training_ds), 100, 100, device=device)
+    for i in range(len(training_ds)):
+        filtered_ds[i] = transforms.Resize((100, 100))(training_ds[i]['xPrint'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
+    training_ds = th.utils.data.TensorDataset(filtered_ds.flatten(1), training_ds['volfrac'],
+                                              training_ds['penal'], training_ds['rmin'],
+                                              training_ds['ft'], training_ds['max_iter'],
+                                              training_ds['overhang_constraint'], training_ds['compliance'])
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -174,9 +181,10 @@ if __name__ == "__main__":
         # Sample noise
         z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
         # THESE BOUNDS ARE PROBLEM DEPENDENT
-        cls = th.linspace(0.3, 1.2, n_designs, device=device)
-        cds = th.linspace(71, 600, n_designs, device=device)
-        desired_objs = th.stack((cls, cds), dim=1)
+
+        linspaces = [th.linspace(objs[:, i].min(), objs[:, i].max(), n_designs, device=device) for i in range(objs.shape[1])]
+
+        desired_objs = th.stack(linspaces, dim=1)
         gen_imgs = generator(z, desired_objs)
         return desired_objs, gen_imgs
 
@@ -186,10 +194,9 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # THIS IS PROBLEM DEPENDENT
-            designs = data["optimized"]
-            cl = data["cl_val"]
-            cd = data["cd_val"]
-            objs = th.stack((cl, cd), dim=1)
+            designs = data[0]
+
+            objs = th.stack((data[1:]), dim=1)
 
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
@@ -255,12 +262,10 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
-                        x, y = tensor.cpu()  # Extract x and y coordinates
-                        cl, cd = desired_objs[j].cpu()
-                        axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
-                        axes[j].title.set_text(f"CL: {cl:.2f}, CD: {cd:.2f}")
-                        axes[j].set_xlim(-0.1, 1.1)  # Adjust x-axis limits
-                        axes[j].set_ylim(-0.5, 0.5)  # Adjust y-axis limits
+                        img = tensor.cpu().reshape(100,100)  # Extract x and y coordinates
+                        do = desired_objs[j].cpu()
+                        axes[j].imshow(img)  # Scatter plot
+                        axes[j].title.set_text(f"volfrac: {do[0]:.2f}, penal: {do[1]:.2f}")
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 
