@@ -201,21 +201,6 @@ class Discriminator(nn.Module):
         validity = self.output_act(out)
         return validity
 
-
-# Define the tensor transformation - resizing the images to 100x100
-resize_transform = transforms.Resize((100, 100))
-def resize_images(images_tensor):
-    """Resizes the images in a 4D PyTorch tensor to 100x100 pixels.
-
-    Args:
-    images_tensor (torch.Tensor): A tensor of shape (n, c, x, y).
-
-    Returns:
-    torch.Tensor: A tensor of the same shape with x and y dimensions resized to 100x100.
-    """
-    resized_images = th.stack([resize_transform(img) for img in images_tensor])
-    return resized_images
-
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
@@ -257,16 +242,12 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    filtered_ds = []
+    filtered_ds = th.zeros(len(training_ds), 100, 100, device=device)
     for i in range(len(training_ds)):
-        if training_ds[i]['xPrint'].shape[0] == 5000:
-            filtered_ds.append(training_ds[i]['xPrint'])
-    training_ds = th.stack(filtered_ds)
-    training_ds = training_ds.reshape(training_ds.shape[0], 1, 100, 50)
-    training_ds = resize_images(training_ds)
-    # print(training_ds.shape)
+        filtered_ds[i] = transforms.Resize((100, 100))(training_ds[i]['xPrint'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
+    filtered_ds = filtered_ds.unsqueeze(1)
     dataloader = th.utils.data.DataLoader(
-        training_ds,
+        filtered_ds,
         batch_size=args.batch_size,
         shuffle=True,
     )

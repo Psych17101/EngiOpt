@@ -138,7 +138,7 @@ if __name__ == "__main__":
     os.makedirs("images", exist_ok=True)
 
     if th.backends.mps.is_available():
-        device = th.device("mps")
+        device = th.device("mps") 
     elif th.cuda.is_available():
         device = th.device("cuda")
     else:
