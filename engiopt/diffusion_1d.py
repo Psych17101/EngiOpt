@@ -175,8 +175,9 @@ if __name__ == "__main__":
                         }
 
                         th.save(ckpt, "model.pth")
-                        artifact = wandb.Artifact("diffusion", type="model")
+                        artifact = wandb.Artifact(f"{args.algo}_model", type="model")
                         artifact.add_file("model.pth")
-                        wandb.log_artifact(artifact)
+
+                        wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()
