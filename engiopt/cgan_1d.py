@@ -176,7 +176,7 @@ if __name__ == "__main__":
         # THESE BOUNDS ARE PROBLEM DEPENDENT
         cls = th.linspace(0.3, 1.2, n_designs, device=device)
         cds = th.linspace(71, 600, n_designs, device=device)
-        desired_objs = th.stack((cls, cds), dim=1)
+        desired_objs = th.stack((cls, cds), dim=1).to(th.float64)
         gen_imgs = generator(z, desired_objs)
         return desired_objs, gen_imgs
 
@@ -187,8 +187,8 @@ if __name__ == "__main__":
         for i, data in enumerate(dataloader):
             # THIS IS PROBLEM DEPENDENT
             designs = data["optimized"]
-            cl = data["cl_val"]
-            cd = data["cd_val"]
+            cl = data["cl_val"].to(th.float64)
+            cd = data["cd_val"].to(th.float64)
             objs = th.stack((cl, cd), dim=1)
 
             # Adversarial ground truths

@@ -71,7 +71,7 @@ class Generator(nn.Module):
         """
         super().__init__()
 
-        self.init_size = 25  # We'll create a 25x25 feature map after the first FC
+        self.init_size = 25  # create a 25x25 feature map after the first FC
         self.fc = nn.Linear(latent_dim, g_features * 4 * self.init_size * self.init_size)
 
         self.conv_blocks = nn.Sequential(
@@ -244,7 +244,7 @@ if __name__ == "__main__":
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
     filtered_ds = th.zeros(len(training_ds), 100, 100, device=device)
     for i in range(len(training_ds)):
-        filtered_ds[i] = transforms.Resize((100, 100))(training_ds[i]['xPrint'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
+        filtered_ds[i] = transforms.Resize((100, 100))(training_ds[i]['optimal_design'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
     filtered_ds = filtered_ds.unsqueeze(1)
     dataloader = th.utils.data.DataLoader(
         filtered_ds,
@@ -325,7 +325,7 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a iamge plot
                     for j, tensor in enumerate(tensors):
-                        img = tensor.cpu()  # Extract x and y coordinates
+                        img = tensor.cpu().numpy()  # Extract x and y coordinates
                         axes[j].imshow(img[0])  # image plot
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
