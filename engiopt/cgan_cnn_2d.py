@@ -132,6 +132,9 @@ class Generator(nn.Module):
 
         # Upsample through the main blocks
         out = self.up_blocks(x)  # -> (B, out_channels, 100, 100)
+
+        # Resize Image
+        out = transforms.Resize((design_shape[0], design_shape[1]))(out)
         return out
 
 
@@ -195,6 +198,9 @@ class Discriminator(nn.Module):
         Output:
             out: (B, out_channels, 1, 1)
         """
+        # Resize Image
+        x = transforms.Resize((100, 100))(x)
+
         # Separate stem for image and condition
         x_feat = self.img_path(x)   # (B, num_filters[0]//2, 50, 50)
         c = c.expand(-1, -1, 100, 100)
@@ -216,7 +222,7 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
-    design_shape = (10000, )
+    design_shape = (200,100)
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -251,9 +257,9 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    filtered_ds = th.zeros(len(training_ds), 1, 100, 100, device=device)
+    filtered_ds = th.zeros(len(training_ds), 1, design_shape[0], design_shape[1], device=device)
     for i in range(len(training_ds)):
-        filtered_ds[i, 0] = transforms.Resize((100, 100))(training_ds[i]['optimal_design'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
+        filtered_ds[i, 0] = transforms.Resize((design_shape[0], design_shape[1]))(training_ds[i]['optimal_design'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
     training_ds = th.utils.data.TensorDataset(filtered_ds.flatten(1), training_ds['volfrac'])
     dataloader = th.utils.data.DataLoader(
         training_ds,
@@ -317,7 +323,7 @@ if __name__ == "__main__":
             optimizer_discriminator.zero_grad()
 
             # Measure discriminator's ability to classify real from generated samples
-            real_loss = adversarial_loss(discriminator(designs.reshape(-1,1,100,100), objs)[:,0,0], valid)
+            real_loss = adversarial_loss(discriminator(designs.reshape(-1,1,design_shape[0], design_shape[1]), objs)[:,0,0], valid)
             fake_loss = adversarial_loss(discriminator(gen_designs.detach(), objs)[:,0,0], fake)
             d_loss = (real_loss + fake_loss) / 2
 
@@ -352,7 +358,7 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
-                        img = tensor.cpu().numpy().reshape(100,100)  # Extract x and y coordinates
+                        img = tensor.cpu().numpy().reshape(design_shape[0], design_shape[1])  # Extract x and y coordinates
                         do = desired_objs[j].cpu()
                         axes[j].imshow(img)  # Scatter plot
                         axes[j].title.set_text(f"volfrac: {do[0]:.2f}")
