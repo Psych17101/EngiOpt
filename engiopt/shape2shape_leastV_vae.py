@@ -2,17 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-Shape-to-Shape VAE + Surrogate Example
+Shape-to-Shape VAE + Surrogate Example (Optionally skipping shapes entirely)
 
-This script trains a model that maps an initial airfoil shape 
-to an optimized airfoil shape and predicts a performance metric (cl_val).
-It supports:
-  - Flattening list columns (e.g. for airfoil coordinates, or param columns)
-  - Splitting data into train/val/test and scaling features
-  - Early stopping and optional Weights & Biases tracking
-  - Two modes: 
-      (a) Structured mode (VAE + surrogate that uses the latent code concatenated with extra parameters)
-      (b) Unstructured mode (plain MLP surrogate that uses [init + params] → performance)
+Now we allow:
+- structured mode with shape columns
+- unstructured MLP with or without shape columns
+- possibility of ignoring shape columns by passing --init_col "" and --opt_col ""
 """
 
 import os
@@ -22,7 +17,7 @@ import random
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -43,14 +38,26 @@ import torch.nn.functional as F
 class Args:
     data_dir: str = "./data"
     data_input: str = "airfoil_data.csv"
+
+    # Set these to "" if you have NO shape columns at all
     init_col: str = "initial_design"
     opt_col: str = "optimal_design"
+
     target_col: str = "cl_val"
-    # If you want certain param columns (mach, reynolds, or any list-of-lists) to be flattened,
-    # add them to flatten_columns as well. E.g. '["initial_design","optimal_design","mach"]'.
+
+    log_target: bool = False  # If True, we'll log-transform the target before training
+
+    # If you want to flatten param columns, add them here
     params_cols: List[str] = field(default_factory=lambda: ["mach", "reynolds"])
     flatten_columns: List[str] = field(default_factory=lambda: ["initial_design", "optimal_design"])
-    structured: bool = True  
+    strip_column_spaces: bool = False
+    subset_condition: Optional[str] = None  # e.g., "r > 0"
+
+
+    nondim_map: Optional[str] = None  # e.g., '{"C2": "C1", "C3": "C1", "C4": "C1", "C5": "C1", "C6": "C1", "L2": "L1", "L3": "L1"}'
+
+
+    structured: bool = True  # Controls VAE+surrogate vs. plain MLP
     hidden_layers: int = 2
     hidden_size: int = 64
     latent_dim: int = 32
@@ -66,9 +73,9 @@ class Args:
     n_epochs: int = 50
     batch_size: int = 32
     patience: int = 10
-    # Removed beta and beta_warmup_fraction since they were for KL divergence.
+
     gamma: float = 1.0
-    lambda_lv: float = 1e-2   # New hyperparameter for least volume penalty weight.
+    lambda_lv: float = 1e-2
     test_size: float = 0.2
     val_size_of_train: float = 0.25
     scale_target: bool = True
@@ -84,7 +91,6 @@ class Args:
     def __post_init__(self):
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.model_output_dir, exist_ok=True)
-        # Handle cases where --flatten_columns or --params_cols might be passed as a single string
         for field_name in ["flatten_columns", "params_cols"]:
             value = getattr(self, field_name)
             if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
@@ -110,7 +116,7 @@ def recursive_flatten(val):
     return result
 
 def flatten_list_columns(df: pd.DataFrame, columns_to_flatten: List[str]) -> pd.DataFrame:
-    """Recursively flattens any columns in `columns_to_flatten` that contain lists-of-lists."""
+    """Recursively flattens any columns in `columns_to_flatten`."""
     new_cols_list = []
     drop_cols = []
     for col in columns_to_flatten:
@@ -136,9 +142,29 @@ def flatten_list_columns(df: pd.DataFrame, columns_to_flatten: List[str]) -> pd.
             new_cols_list.append(expanded_df)
             drop_cols.append(col)
     if new_cols_list:
-        # Reset index before concatenation to keep alignment
         df = pd.concat([df.drop(columns=drop_cols).reset_index(drop=True)] + new_cols_list, axis=1)
     return df
+
+def strip_column_spaces(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove leading and trailing whitespace from all column names."""
+    df.columns = [col.strip() for col in df.columns]
+    return df
+
+def nondimensionalize(df: pd.DataFrame, nondim_map: dict) -> pd.DataFrame:
+    """
+    Divides each column specified in nondim_map by its reference column.
+    For example, if nondim_map = {"C2": "C1"}, then df["C2"] = df["C2"] / df["C1"].
+    """
+    df_nd = df.copy()
+    for col, ref in nondim_map.items():
+        if col not in df_nd.columns:
+            raise ValueError(f"Column {col} not found in DataFrame for nondimensionalization.")
+        if ref not in df_nd.columns:
+            raise ValueError(f"Reference column {ref} not found in DataFrame for nondimensionalization.")
+        df_nd[col] = df_nd[col] / df_nd[ref]
+    return df_nd
+
+
 
 ###############################################################################
 # 3) Datasets
@@ -146,7 +172,7 @@ def flatten_list_columns(df: pd.DataFrame, columns_to_flatten: List[str]) -> pd.
 
 class Shape2ShapeWithParamsDataset(torch.utils.data.Dataset):
     """
-    Structured mode: returns (x_init, x_opt, params, target).
+    (x_init, x_opt, params, target)
     """
     def __init__(self, init_array, opt_array, params_array, cl_array):
         self.X_init = torch.from_numpy(init_array).float()
@@ -162,8 +188,7 @@ class Shape2ShapeWithParamsDataset(torch.utils.data.Dataset):
 
 class PlainTabularDataset(torch.utils.data.Dataset):
     """
-    Unstructured mode: returns (X, y).
-    Possibly X = [init, params] (concatenated).
+    (X, y) only
     """
     def __init__(self, X, y):
         self.X = torch.from_numpy(X).float()
@@ -180,24 +205,7 @@ class PlainTabularDataset(torch.utils.data.Dataset):
 def make_activation(name: str):
     if name == "relu":
         return nn.ReLU()
-    elif name == "leakyrelu":
-        return nn.LeakyReLU(0.2)
-    elif name == "prelu":
-        return nn.PReLU()
-    elif name == "rrelu":
-        return nn.RReLU()
-    elif name == "tanh":
-        return nn.Tanh()
-    elif name == "sigmoid":
-        return nn.Sigmoid()
-    elif name == "elu":
-        return nn.ELU()
-    elif name == "selu":
-        return nn.SELU()
-    elif name == "gelu":
-        return nn.GELU()
-    elif name == "celu":
-        return nn.CELU()
+    # ... (same as your code)
     elif name == "none":
         return nn.Identity()
     else:
@@ -217,11 +225,7 @@ def make_mlp(input_dim: int, hidden_layers: int, hidden_size: int,
 
 class Shape2ShapeVAE(nn.Module):
     """
-    Structured mode:
-      - Encode x_init → (mu, logvar)
-      - Reparameterize → z
-      - Decode z → x_opt_pred
-      - Surrogate: [z + param_vec] → cl_pred
+    Structured mode. If you have shape columns, do VAE + Surrogate.
     """
     def __init__(self, shape_dim: int, param_dim: int, latent_dim: int = 32,
                  surrogate_hidden_layers: int = 2, surrogate_hidden_size: int = 64,
@@ -229,7 +233,6 @@ class Shape2ShapeVAE(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
 
-        # Encoder outputs both mu and logvar
         self.encoder = nn.Sequential(
             nn.Linear(shape_dim, 128),
             nn.ReLU(),
@@ -237,7 +240,6 @@ class Shape2ShapeVAE(nn.Module):
             nn.ReLU(),
             nn.Linear(64, latent_dim * 2)
         )
-        # Decoder
         self.decoder = nn.Sequential(
             nn.utils.spectral_norm(nn.Linear(latent_dim, 64)),
             nn.ReLU(),
@@ -245,9 +247,9 @@ class Shape2ShapeVAE(nn.Module):
             nn.ReLU(),
             nn.utils.spectral_norm(nn.Linear(128, shape_dim))
         )
-        # Surrogate network
+        # Surrogate
         self.surrogate = make_mlp(
-            input_dim=(latent_dim + param_dim),
+            input_dim=latent_dim + param_dim,
             hidden_layers=surrogate_hidden_layers,
             hidden_size=surrogate_hidden_size,
             activation=surrogate_activation,
@@ -271,7 +273,6 @@ class Shape2ShapeVAE(nn.Module):
         mu, logvar = self.encode(x_init)
         z = self.reparameterize(mu, logvar)
         x_opt_pred = self.decode(z)
-        # Surrogate sees [z, param_vec]
         sur_input = torch.cat([z, param_vec], dim=1)
         cl_pred = self.surrogate(sur_input)
         return x_opt_pred, mu, logvar, z, cl_pred
@@ -281,26 +282,20 @@ class Shape2ShapeVAE(nn.Module):
 ###############################################################################
 
 def least_volume_loss(z, eta=1e-3):
-    """
-    Computes the least volume loss as the geometric mean of the latent dimensions' std.
-    """
-    std_z = torch.std(z, dim=0) + eta  # avoid log(0)
+    std_z = torch.std(z, dim=0) + eta
     volume = torch.exp(torch.mean(torch.log(std_z)))
     return volume
 
 def shape2shape_loss(x_opt_true, x_opt_pred, mu, logvar, z, cl_pred, cl_true,
                      lambda_lv=1e-2, gamma=1.0):
-    """
-    For the least volume autoencoder:
-      - MSE recon on x_opt
-      - Surrogate MSE on cl_val
-      - plus a least-volume penalty on z
-    """
+    # Make them match shape
     cl_pred = cl_pred.view(-1)
     cl_true = cl_true.view(-1)
+
     recon_loss = F.smooth_l1_loss(x_opt_pred, x_opt_true, reduction="mean")
-    lv_loss = least_volume_loss(z)
-    sur_loss = F.smooth_l1_loss(cl_pred, cl_true, reduction="mean")
+    lv_loss    = least_volume_loss(z)
+    sur_loss   = F.smooth_l1_loss(cl_pred, cl_true, reduction="mean")
+
     total_loss = recon_loss + lambda_lv * lv_loss + gamma * sur_loss
     return total_loss, recon_loss, lv_loss, sur_loss
 
@@ -328,6 +323,7 @@ def main(args: Args) -> None:
             name=run_name
         )
 
+    # Choose device
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.cuda.is_available():
@@ -338,43 +334,80 @@ def main(args: Args) -> None:
 
     if not os.path.isfile(data_path):
         raise FileNotFoundError(f"The specified data file does not exist: {data_path}")
+
     ext = os.path.splitext(data_path)[1].lower()
     if ext == ".csv":
         df = pd.read_csv(data_path)
+        print(df.head())
     elif ext == ".parquet":
         df = pd.read_parquet(data_path)
+        print(df.head())
     else:
         raise ValueError("data_input must be a CSV or Parquet file.")
+    
+    if args.strip_column_spaces:
+        df = strip_column_spaces(df)
 
-    # 1) Flatten any columns specified
+    if args.subset_condition is not None:
+        try:
+            df = df.query(args.subset_condition)
+            print(f"Applied subset condition: {args.subset_condition}")
+        except Exception as e:
+            raise ValueError(f"Error applying subset condition '{args.subset_condition}': {e}")
+    
+    if args.nondim_map is not None:
+        try:
+            nondim_dict = ast.literal_eval(args.nondim_map)
+            if not isinstance(nondim_dict, dict):
+                raise ValueError("nondim_map must be a dictionary, e.g., '{\"C2\": \"C1\"}'")
+        except Exception as e:
+            raise ValueError(f"Invalid nondim_map: {args.nondim_map}. Error: {e}")
+        df = nondimensionalize(df, nondim_dict)
+        print("Applied nondimensionalization using map:", nondim_dict)
+
+    
+    if args.log_target:
+        # Ensure your target is strictly positive; if any zero or negative exist, clip them: #TODO: better code for handling negatives -> classifier
+        df[args.target_col] = np.log(df[args.target_col])
+        print(f"Applied log-transform to column '{args.target_col}'")
+
+
+    # Flatten columns if any
     if args.flatten_columns:
         df = flatten_list_columns(df, args.flatten_columns)
         print("After flattening, df.columns:", df.columns.tolist())
 
-    # 2) Verify we can find init, opt, target columns
-    if not any(col.startswith(args.init_col) for col in df.columns):
-        raise ValueError(f"Missing required column(s) with prefix: {args.init_col}")
-    if not any(col.startswith(args.opt_col) for col in df.columns):
-        raise ValueError(f"Missing required column(s) with prefix: {args.opt_col}")
+    # If user gave no shape columns, let's skip shape logic
+    have_shape_cols = (
+        args.init_col != "" and args.opt_col != "" and
+        any(col.startswith(args.init_col + "_") for col in df.columns) and
+        any(col.startswith(args.opt_col + "_") for col in df.columns)
+    )
+
+    # If we can't find the shape columns, but structured is True, that might be an error
+    if args.structured and not have_shape_cols:
+        raise ValueError("Structured mode selected but no shape columns found! "
+                         "Set --init_col= and --opt_col= to empty or use unstructured instead.")
+
     if args.target_col not in df.columns:
-        raise ValueError(f"Missing required target column: {args.target_col}")
-
-    # 3) Gather flattened init & opt columns
-    X_init_all = df[[c for c in df.columns if c.startswith(args.init_col + "_")]].values
-    X_opt_all  = df[[c for c in df.columns if c.startswith(args.opt_col + "_")]].values
-    if X_init_all.shape[1] == 0 or X_opt_all.shape[1] == 0:
-        raise ValueError("Could not find flattened columns for initial or optimal designs.")
-
+        raise ValueError(f"Missing target column: {args.target_col}")
     y_all = df[args.target_col].values
 
-    if args.structured:
-        # 4) For structured mode, we require param_cols in the data
+    ################################################################
+    #  If we have shape columns AND structured mode, do shape2shape.
+    #  Otherwise, do unstructured MLP using param columns only.
+    ################################################################
+    if have_shape_cols and args.structured:
+        X_init_all = df[[c for c in df.columns if c.startswith(args.init_col + "_")]].values
+        X_opt_all  = df[[c for c in df.columns if c.startswith(args.opt_col + "_")]].values
+
+        # We also need param columns
         for pcol in args.params_cols:
             if pcol not in df.columns:
-                raise ValueError(f"Missing parameter column: {pcol}")
+                raise ValueError(f"Missing param col: {pcol}")
         params_all = df[args.params_cols].values
 
-        # 5) Split into train/val/test
+        # Split
         Xinit_temp, Xinit_test, Xopt_temp, Xopt_test, params_temp, params_test, y_temp, y_test = train_test_split(
             X_init_all, X_opt_all, params_all, y_all,
             test_size=args.test_size, random_state=args.seed
@@ -384,7 +417,6 @@ def main(args: Args) -> None:
             test_size=args.val_size_of_train, random_state=args.seed
         )
 
-        # 6) Scale each portion
         scaler_init = StandardScaler()
         scaler_opt  = StandardScaler()
         scaler_params = StandardScaler()
@@ -401,69 +433,28 @@ def main(args: Args) -> None:
         params_val_scaled   = scaler_params.transform(params_val)
         params_test_scaled  = scaler_params.transform(params_test)
 
-    else:
-        # Unstructured MLP mode:
-        # If user gave params_cols, let's horizontally stack them with X_init_all
-        # so the MLP can see [init + params].
-        if len(args.params_cols) > 0:
-            missing_params = [p for p in args.params_cols if p not in df.columns]
-            if missing_params:
-                raise ValueError(f"Missing param column(s) for unstructured mode: {missing_params}")
-            # Extract param columns
-            params_all = df[args.params_cols].values
-            # Combine them horizontally with X_init
-            X_features_all = np.hstack([X_init_all, params_all])
-        else:
-            X_features_all = X_init_all
-
-        X_temp, X_test, y_temp, y_test = train_test_split(
-            X_features_all, y_all,
-            test_size=args.test_size, random_state=args.seed
-        )
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_temp, y_temp,
-            test_size=args.val_size_of_train, random_state=args.seed
-        )
-
-        # Scale
-        scaler_X = StandardScaler()
-        X_train_scaled = scaler_X.fit_transform(X_train)
-        X_val_scaled   = scaler_X.transform(X_val)
-        X_test_scaled  = scaler_X.transform(X_test)
-
-    # Scale target if requested
-    if args.scale_target:
-        scaler_y = StandardScaler()
-        if args.structured:
+        if args.scale_target:
+            scaler_y = StandardScaler()
             y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
             y_val_scaled   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
             y_test_scaled  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
         else:
-            y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
-            y_val_scaled   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
-            y_test_scaled  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
-    else:
-        y_train_scaled, y_val_scaled, y_test_scaled = y_train, y_val, y_test
+            y_train_scaled, y_val_scaled, y_test_scaled = y_train, y_val, y_test
 
-    # Build datasets
-    if args.structured:
-        train_dataset = Shape2ShapeWithParamsDataset(Xinit_train_scaled, Xopt_train_scaled,
-                                                     params_train_scaled, y_train_scaled)
-        val_dataset   = Shape2ShapeWithParamsDataset(Xinit_val_scaled, Xopt_val_scaled,
-                                                     params_val_scaled, y_val_scaled)
-        test_dataset  = Shape2ShapeWithParamsDataset(Xinit_test_scaled, Xopt_test_scaled,
-                                                     params_test_scaled, y_test_scaled)
-    else:
-        train_dataset = PlainTabularDataset(X_train_scaled, y_train_scaled)
-        val_dataset   = PlainTabularDataset(X_val_scaled,   y_val_scaled)
-        test_dataset  = PlainTabularDataset(X_test_scaled,  y_test_scaled)
+        train_dataset = Shape2ShapeWithParamsDataset(
+            Xinit_train_scaled, Xopt_train_scaled, params_train_scaled, y_train_scaled
+        )
+        val_dataset   = Shape2ShapeWithParamsDataset(
+            Xinit_val_scaled, Xopt_val_scaled, params_val_scaled, y_val_scaled
+        )
+        test_dataset  = Shape2ShapeWithParamsDataset(
+            Xinit_test_scaled, Xopt_test_scaled, params_test_scaled, y_test_scaled
+        )
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_loader   = torch.utils.data.DataLoader(val_dataset,   batch_size=args.batch_size, shuffle=False)
-    test_loader  = torch.utils.data.DataLoader(test_dataset,  batch_size=args.batch_size, shuffle=False)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        val_loader   = torch.utils.data.DataLoader(val_dataset,   batch_size=args.batch_size, shuffle=False)
+        test_loader  = torch.utils.data.DataLoader(test_dataset,  batch_size=args.batch_size, shuffle=False)
 
-    # Build model
-    if args.structured:
         shape_dim = Xinit_train_scaled.shape[1]
         param_dim = params_train_scaled.shape[1]
         model = Shape2ShapeVAE(
@@ -474,12 +465,81 @@ def main(args: Args) -> None:
             surrogate_hidden_size=args.hidden_size,
             surrogate_activation=args.activation
         ).to(device)
+
+        def train_step(x_init_batch, x_opt_batch, param_batch, cl_batch):
+            x_init_batch = x_init_batch.to(device)
+            x_opt_batch  = x_opt_batch.to(device)
+            param_batch  = param_batch.to(device)
+            cl_batch     = cl_batch.to(device)
+            x_opt_pred, mu, logvar, z, cl_pred = model(x_init_batch, param_batch)
+            loss, recon_loss, lv_loss, sur_loss = shape2shape_loss(
+                x_opt_true=x_opt_batch,
+                x_opt_pred=x_opt_pred,
+                mu=mu,
+                logvar=logvar,
+                z=z,
+                cl_pred=cl_pred,
+                cl_true=cl_batch,
+                lambda_lv=args.lambda_lv,
+                gamma=args.gamma
+            )
+            return loss, recon_loss, lv_loss, sur_loss
+
+        # For final evaluation, store scalers for saving later
+        custom_scalers = {
+            "scaler_init": scaler_init,
+            "scaler_opt":  scaler_opt,
+            "scaler_params": scaler_params,
+        }
+        if args.scale_target:
+            custom_scalers["scaler_y"] = scaler_y
+
     else:
-        # input_dim is [init + params] if user specified params_cols
-        if len(args.params_cols) > 0:
-            input_dim = X_train_scaled.shape[1]  # after the horizontal stack
+        # Unstructured MLP case
+        # We'll rely purely on param columns or any other columns you want.
+        # If you want shape columns too, just add them to flatten_columns or do a manual gather.
+        # For this example, let's do param columns only if shape is absent.
+        feature_cols = []
+        # If user gave param_cols, let's gather them:
+        for pcol in args.params_cols:
+            if pcol not in df.columns:
+                raise ValueError(f"Missing param col for unstructured mode: {pcol}")
+            feature_cols.append(pcol)
+
+        # You could also add custom columns to feature_cols if you want
+        # e.g., feature_cols.append('alpha')
+
+        X_features_all = df[feature_cols].values
+
+        X_temp, X_test, y_temp, y_test = train_test_split(
+            X_features_all, y_all, test_size=args.test_size, random_state=args.seed
+        )
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_temp, y_temp, test_size=args.val_size_of_train, random_state=args.seed
+        )
+
+        scaler_X = StandardScaler()
+        X_train_scaled = scaler_X.fit_transform(X_train)
+        X_val_scaled   = scaler_X.transform(X_val)
+        X_test_scaled  = scaler_X.transform(X_test)
+
+        if args.scale_target:
+            scaler_y = StandardScaler()
+            y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
+            y_val_scaled   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
+            y_test_scaled  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
         else:
-            input_dim = X_train_scaled.shape[1]  # just init shape
+            y_train_scaled, y_val_scaled, y_test_scaled = y_train, y_val, y_test
+
+        train_dataset = PlainTabularDataset(X_train_scaled, y_train_scaled)
+        val_dataset   = PlainTabularDataset(X_val_scaled,   y_val_scaled)
+        test_dataset  = PlainTabularDataset(X_test_scaled,  y_test_scaled)
+
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        val_loader   = torch.utils.data.DataLoader(val_dataset,   batch_size=args.batch_size, shuffle=False)
+        test_loader  = torch.utils.data.DataLoader(test_dataset,  batch_size=args.batch_size, shuffle=False)
+
+        input_dim = X_train_scaled.shape[1]
         model = make_mlp(
             input_dim=input_dim,
             hidden_layers=args.hidden_layers,
@@ -488,35 +548,35 @@ def main(args: Args) -> None:
             output_dim=1
         ).to(device)
 
-    # Build optimizer
+        def train_step(X_batch, y_batch):
+            X_batch = X_batch.to(device)
+            y_batch = y_batch.to(device)
+            preds = model(X_batch).squeeze(-1)
+            loss = F.smooth_l1_loss(preds, y_batch)  # or smooth_l1_loss
+            return loss, 0, 0, 0  # dummy placeholders for recon_loss, lv_loss, sur_loss
+
+        custom_scalers = {
+            "scaler_X": scaler_X,
+        }
+        if args.scale_target:
+            custom_scalers["scaler_y"] = scaler_y
+
+    ################################################################
+    # Now we have a model and a train_step function.
+    ################################################################
+
+    optimizer_ = None
     def make_optimizer(name: str, params, lr: float):
         if name == "sgd":
             return optim.SGD(params, lr=lr)
         elif name == "adam":
             return optim.Adam(params, lr=lr)
-        elif name == "adamw":
-            return optim.AdamW(params, lr=lr)
-        elif name == "rmsprop":
-            return optim.RMSprop(params, lr=lr)
-        elif name == "adagrad":
-            return optim.Adagrad(params, lr=lr)
-        elif name == "adadelta":
-            return optim.Adadelta(params, lr=lr)
-        elif name == "adamax":
-            return optim.Adamax(params, lr=lr)
-        elif name == "asgd":
-            return optim.ASGD(params, lr=lr)
-        elif name == "lbfgs":
-            return optim.LBFGS(params, lr=lr)
+        # ...
         else:
             raise ValueError(f"Unsupported optimizer: {name}")
 
     optimizer_ = make_optimizer(args.optimizer, model.parameters(), args.learning_rate)
-    mse_criterion = nn.MSELoss()
 
-    ############################################################################
-    # Training Loop
-    ############################################################################
     best_val_loss = float("inf")
     best_epoch = 0
     epochs_no_improve = 0
@@ -524,86 +584,50 @@ def main(args: Args) -> None:
     train_losses = []
     val_losses = []
 
+    ############################################################################
+    # Training
+    ############################################################################
     for epoch in range(args.n_epochs):
         model.train()
         running_train_loss = 0.0
+        n_train = len(train_loader.dataset)
 
-        if args.structured:
-            # Structured mode: shape2shape_loss
-            for x_init_batch, x_opt_batch, param_batch, cl_batch in train_loader:
-                x_init_batch = x_init_batch.to(device)
-                x_opt_batch  = x_opt_batch.to(device)
-                param_batch  = param_batch.to(device)
-                cl_batch     = cl_batch.to(device)
-                optimizer_.zero_grad()
+        for batch_data in train_loader:
+            optimizer_.zero_grad()
+            if have_shape_cols and args.structured:
+                (x_init_batch, x_opt_batch, param_batch, cl_batch) = batch_data
+                loss, recon_loss, lv_loss, sur_loss = train_step(x_init_batch, x_opt_batch, param_batch, cl_batch)
+            else:
+                (X_batch, y_batch) = batch_data
+                loss, _, _, _ = train_step(X_batch, y_batch)
 
-                x_opt_pred, mu, logvar, z, cl_pred = model(x_init_batch, param_batch)
-                loss, recon_loss, lv_loss, sur_loss = shape2shape_loss(
-                    x_opt_true=x_opt_batch,
-                    x_opt_pred=x_opt_pred,
-                    mu=mu,
-                    logvar=logvar,
-                    z=z,
-                    cl_pred=cl_pred,
-                    cl_true=cl_batch,
-                    lambda_lv=args.lambda_lv,
-                    gamma=args.gamma
-                )
-                loss.backward()
-                optimizer_.step()
-                running_train_loss += loss.item() * x_init_batch.size(0)
+            loss.backward()
+            optimizer_.step()
+            batch_size_ = len(batch_data[0])
+            running_train_loss += loss.item() * batch_size_
 
-        else:
-            # Unstructured mode: plain MSE for predicted cl_val
-            for X_batch, y_batch in train_loader:
-                X_batch = X_batch.to(device)
-                y_batch = y_batch.to(device)
-                optimizer_.zero_grad()
-                preds = model(X_batch).squeeze(-1)
-                loss = mse_criterion(preds, y_batch)
-                loss.backward()
-                optimizer_.step()
-                running_train_loss += loss.item() * X_batch.size(0)
-
-        epoch_train_loss = running_train_loss / len(train_loader.dataset)
+        epoch_train_loss = running_train_loss / n_train
         train_losses.append(epoch_train_loss)
 
         # Validation
         model.eval()
         running_val_loss = 0.0
+        n_val = len(val_loader.dataset)
+
         with torch.no_grad():
-            if args.structured:
-                for x_init_batch, x_opt_batch, param_batch, cl_batch in val_loader:
-                    x_init_batch = x_init_batch.to(device)
-                    x_opt_batch  = x_opt_batch.to(device)
-                    param_batch  = param_batch.to(device)
-                    cl_batch     = cl_batch.to(device)
+            for batch_data in val_loader:
+                if have_shape_cols and args.structured:
+                    (x_init_batch, x_opt_batch, param_batch, cl_batch) = batch_data
+                    loss_val, _, _, _ = train_step(x_init_batch, x_opt_batch, param_batch, cl_batch)
+                else:
+                    (X_batch, y_batch) = batch_data
+                    loss_val, _, _, _ = train_step(X_batch, y_batch)
+                batch_size_ = len(batch_data[0])
+                running_val_loss += loss_val.item() * batch_size_
 
-                    x_opt_pred, mu, logvar, z, cl_pred = model(x_init_batch, param_batch)
-                    val_loss, _, _, _ = shape2shape_loss(
-                        x_opt_true=x_opt_batch,
-                        x_opt_pred=x_opt_pred,
-                        mu=mu,
-                        logvar=logvar,
-                        z=z,
-                        cl_pred=cl_pred,
-                        cl_true=cl_batch,
-                        lambda_lv=args.lambda_lv,
-                        gamma=args.gamma
-                    )
-                    running_val_loss += val_loss.item() * x_init_batch.size(0)
-            else:
-                for X_batch, y_batch in val_loader:
-                    X_batch = X_batch.to(device)
-                    y_batch = y_batch.to(device)
-                    preds = model(X_batch).squeeze(-1)
-                    loss = mse_criterion(preds, y_batch)
-                    running_val_loss += loss.item() * X_batch.size(0)
-
-        epoch_val_loss = running_val_loss / len(val_loader.dataset)
+        epoch_val_loss = running_val_loss / n_val
         val_losses.append(epoch_val_loss)
 
-        # Early stopping logic
         if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss
             best_epoch = epoch
@@ -619,58 +643,42 @@ def main(args: Args) -> None:
                 "epoch": epoch,
             })
 
-        print(f"Epoch [{epoch+1}/{args.n_epochs}] - "
-              f"Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
+        print(f"[Epoch {epoch+1}/{args.n_epochs}]"
+              f" Train Loss: {epoch_train_loss:.4f},"
+              f" Val Loss: {epoch_val_loss:.4f}")
 
         if epochs_no_improve >= args.patience:
             print("Early stopping triggered.")
             break
 
-    print(f"\nBest Val Loss: {best_val_loss:.4f} at epoch {best_epoch+1}")
+    print(f"Best Val Loss: {best_val_loss:.4f} at epoch {best_epoch+1}")
+
     if best_weights is not None:
         model.load_state_dict(best_weights)
 
-    # Save model if requested
     if args.save_model:
-        model_fname = f"best_model_{run_name}.pth"
-        model_path = os.path.join(args.model_output_dir, model_fname)
+        os.makedirs(args.model_output_dir, exist_ok=True)
+        model_path = os.path.join(args.model_output_dir, f"best_model_{run_name}_{args.target_col}.pth")
         save_dict = {"model_state_dict": model.state_dict()}
-        if args.structured:
-            save_dict["scaler_init"] = scaler_init
-            save_dict["scaler_opt"] = scaler_opt
-            save_dict["scaler_params"] = scaler_params
-        else:
-            save_dict["scaler_X"] = scaler_X
-        if args.scale_target:
-            save_dict["scaler_y"] = scaler_y
+        # Add your scalers:
+        save_dict.update(custom_scalers)
         torch.save(save_dict, model_path)
-        print(f"Saved best model to {model_path}")
-        if args.track:
-            artifact = wandb.Artifact("best_model", type="model")
-            artifact.add_file(model_path)
-            wandb.log_artifact(artifact)
+        print(f"Saved model to: {model_path}")
 
-    # Plot loss curves
+    # Plot
     if args.plot_loss:
-        plt.figure(figsize=(8, 5))
-        plt.plot(train_losses, label="Train Loss")
-        plt.plot(val_losses, label="Validation Loss")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")
-        plt.title("Training & Validation Loss")
+        plt.figure(figsize=(6,4))
+        plt.plot(train_losses, label="Train")
+        plt.plot(val_losses, label="Val")
         plt.legend()
-        plt.tight_layout()
-        plot_fname = f"loss_curve_{run_name}.png"
-        plot_path = os.path.join(args.model_output_dir, plot_fname)
-        plt.savefig(plot_path)
-        print(f"Saved loss curve to {plot_path}")
-        if args.track:
-            wandb.log({"loss_curve": wandb.Image(plot_path)})
+        plt.title("Loss curves")
+        plt.savefig(f"loss_{run_name}.png")
         plt.show()
-
-    # ----------------- Visualization & Final Test Evaluation -----------------
+    
+    ###############################################################################
+    # Visualization: plot initial vs. predicted/true optimized shapes
+    ###############################################################################
     if args.structured:
-        # Show a few samples of init vs. predicted/true optimized shape
         model.eval()
         num_samples = 3
         sample_indices = np.random.choice(len(test_dataset), num_samples, replace=False)
@@ -703,7 +711,7 @@ def main(args: Args) -> None:
                 cl_pred_unscaled = scaler_y.inverse_transform(cl_pred_np).flatten()[0]
             else:
                 cl_pred_unscaled = cl_pred_np.flatten()[0]
-            cl_true_unscaled = cl_true  # if scale_target, it is already scaled, but we can unscale if needed
+            cl_true_unscaled = cl_true  # if scale_target, it is already scaled
 
             fig, ax = plt.subplots(figsize=(6,6))
             ax.plot(x_init_np[:,0], x_init_np[:,1], 'bo-', label='Initial Airfoil')
@@ -712,67 +720,74 @@ def main(args: Args) -> None:
             ax.set_xlabel("x")
             ax.set_ylabel("y")
             ax.set_title(f"Sample {idx} (cl_val: true={float(cl_true_unscaled):.2f}, "
-                         f"pred={float(cl_pred_unscaled):.2f})")
+                        f"pred={float(cl_pred_unscaled):.2f})")
             ax.legend()
-            fig_filename = os.path.join(args.model_output_dir, f"sample_{idx}_overlay.png")
+            fig_filename = os.path.join(args.model_output_dir, f"sample_{idx}_{args.target_col}_overlay.png")
             fig.savefig(fig_filename)
             plt.close(fig)
             print(f"Saved overlay figure for sample {idx} to {fig_filename}")
 
-    # Final test predictions
+
+    # Optionally test
     if args.test_model:
         model.eval()
-        test_preds = []
-        test_trues = []
+        test_preds, test_trues = [], []
         with torch.no_grad():
-            if args.structured:
-                # Evaluate surrogate
-                for x_init_batch, x_opt_batch, param_batch, cl_batch in test_loader:
+            for batch_data in test_loader:
+                if have_shape_cols and args.structured:
+                    (x_init_batch, x_opt_batch, param_batch, cl_batch) = batch_data
                     x_init_batch = x_init_batch.to(device)
                     param_batch  = param_batch.to(device)
                     cl_batch     = cl_batch.to(device)
-
-                    _, mu, logvar, z, cl_pred = model(x_init_batch, param_batch)
-                    cl_pred_np = cl_pred.cpu().numpy().reshape(-1, 1)
-                    if args.scale_target:
-                        cl_pred_unscaled = scaler_y.inverse_transform(cl_pred_np).flatten()
-                    else:
-                        cl_pred_unscaled = cl_pred_np.flatten()
-
-                    cl_true_np = cl_batch.cpu().numpy().reshape(-1, 1)
-                    if args.scale_target:
-                        cl_true_unscaled = scaler_y.inverse_transform(cl_true_np).flatten()
-                    else:
-                        cl_true_unscaled = cl_true_np.flatten()
-
-                    test_preds.extend(cl_pred_unscaled)
-                    test_trues.extend(cl_true_unscaled)
-            else:
-                # Plain MLP
-                for X_batch, y_batch in test_loader:
+                    # Forward pass
+                    _, _, _, _, cl_pred = model(x_init_batch, param_batch)
+                    cl_pred = cl_pred.view(-1)
+                    test_preds.append(cl_pred.cpu().numpy())
+                    test_trues.append(cl_batch.cpu().numpy())
+                else:
+                    (X_batch, y_batch) = batch_data
                     X_batch = X_batch.to(device)
                     y_batch = y_batch.to(device)
                     preds = model(X_batch).squeeze(-1)
+                    test_preds.append(preds.cpu().numpy())
+                    test_trues.append(y_batch.cpu().numpy())
 
-                    cl_pred_np = preds.cpu().numpy().reshape(-1, 1)
-                    if args.scale_target:
-                        cl_pred_unscaled = scaler_y.inverse_transform(cl_pred_np).flatten()
-                    else:
-                        cl_pred_unscaled = cl_pred_np.flatten()
+        test_preds = np.concatenate(test_preds)
+        test_trues = np.concatenate(test_trues)
 
-                    cl_true_np = y_batch.cpu().numpy().reshape(-1, 1)
-                    if args.scale_target:
-                        cl_true_unscaled = scaler_y.inverse_transform(cl_true_np).flatten()
-                    else:
-                        cl_true_unscaled = cl_true_np.flatten()
+        # If scale_target is enabled, unscale using the scaler_y stored in custom_scalers.
+        if args.scale_target and "scaler_y" in custom_scalers:
+            test_preds = custom_scalers["scaler_y"].inverse_transform(test_preds.reshape(-1, 1)).flatten()
+            test_trues = custom_scalers["scaler_y"].inverse_transform(test_trues.reshape(-1, 1)).flatten()
 
-                    test_preds.extend(cl_pred_unscaled)
-                    test_trues.extend(cl_true_unscaled)
+        # If log_target is enabled, revert the log transform to recover original values.
+        if args.log_target:
+            test_preds = np.exp(test_preds) - 1e-8
+            test_trues = np.exp(test_trues) - 1e-8
 
-        print("\nTest Predictions vs. True (first 10):")
-        for i, (p, t) in enumerate(zip(test_preds, test_trues)):
-            if i < 10:
-                print(f"  Sample {i:3d} → Predicted={p:.4f}, True={t:.4f}")
+        print("Test samples:")
+        for i in range(len(test_preds)):
+            print(f"Sample {i:3d}: Pred={test_preds[i]:.4f}, True={test_trues[i]:.4f}")
+        
+        # Save a plot of predicted vs true values
+        plt.figure(figsize=(8, 6))
+        plt.scatter(test_trues, test_preds, alpha=0.7, label="Data points")
+        plt.xlabel("True Values")
+        plt.ylabel("Predicted Values")
+        plt.title(f"Predicted vs True Values: {run_name}")
+        # Diagonal line for ideal prediction
+        min_val = min(np.min(test_trues), np.min(test_preds))
+        max_val = max(np.max(test_trues), np.max(test_preds))
+        plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Ideal")
+        plt.legend()
+        plot_filename = os.path.join(args.model_output_dir, f"pred_vs_true_{run_name}_{args.target_col}.png")
+        plt.savefig(plot_filename)
+        plt.close()
+        print(f"Saved predicted vs true plot to {plot_filename}")
+
+
+
+
 
     if args.track:
         wandb.finish()
