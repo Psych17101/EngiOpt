@@ -27,7 +27,7 @@ import tyro
 import wandb
 from matplotlib import pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 
 import torch.nn.functional as F
 
@@ -69,6 +69,10 @@ class Args:
         "adagrad", "adadelta", "adamax", "asgd", "lbfgs"
     ] = "adam"
     learning_rate: float = 1e-3
+    # Learning rate scheduler parameters
+    lr_decay: float = 1.0       # gamma for ExponentialLR; 1.0 means no decay.
+    lr_decay_step: int = 1      # how often (in epochs) to step the scheduler
+
     n_epochs: int = 50
     batch_size: int = 32
     patience: int = 10
@@ -507,6 +511,9 @@ def train_one_model(args,
 
     optimizer_ = make_optimizer(args.optimizer, model.parameters(), args.learning_rate)
 
+    # Create the learning rate scheduler (if lr_decay < 1.0, decay will occur)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer_, gamma=args.lr_decay)
+
     best_val_loss = float("inf")
     best_epoch = 0
     epochs_no_improve = 0
@@ -562,6 +569,10 @@ def train_one_model(args,
             best_weights = model.state_dict()
         else:
             epochs_no_improve += 1
+
+        # End of epoch: update learning rate if needed.
+        if (epoch + 1) % args.lr_decay_step == 0:
+            scheduler.step()
 
         if args.track:
             wandb.log({
@@ -680,7 +691,7 @@ def main(args: Args) -> None:
         print("Categorical param columns:", cat_df.columns.tolist())
 
         if not cont_df.empty:
-            scaler_cont = StandardScaler()
+            scaler_cont = RobustScaler()
             cont_values = scaler_cont.fit_transform(cont_df.values)
         else:
             cont_values = np.empty((len(df), 0))
@@ -702,9 +713,9 @@ def main(args: Args) -> None:
                 test_size=args.val_size_of_train, random_state=split_random_state
             )
 
-        scaler_init = StandardScaler()
-        scaler_opt  = StandardScaler()
-        scaler_params = StandardScaler()
+        scaler_init = RobustScaler()
+        scaler_opt  = RobustScaler()
+        scaler_params = RobustScaler()
 
         Xinit_train_scaled = scaler_init.fit_transform(Xinit_train)
         Xinit_val_scaled   = scaler_init.transform(Xinit_val)
@@ -719,7 +730,7 @@ def main(args: Args) -> None:
         params_test_scaled  = scaler_params.transform(params_test)
 
         if args.scale_target:
-            scaler_y = StandardScaler()
+            scaler_y = RobustScaler()
             y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
             y_val_scaled   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
             y_test_scaled  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
@@ -759,7 +770,7 @@ def main(args: Args) -> None:
         print("Categorical param columns:", cat_df.columns.tolist())
 
         if not cont_df.empty:
-            scaler_cont = StandardScaler()
+            scaler_cont = RobustScaler()
             cont_values = scaler_cont.fit_transform(cont_df.values)
         else:
             cont_values = np.empty((len(df), 0))
@@ -774,13 +785,13 @@ def main(args: Args) -> None:
             X_temp, y_temp, test_size=args.val_size_of_train, random_state=split_random_state
         )
 
-        scaler_X = StandardScaler()
+        scaler_X = RobustScaler()
         X_train_scaled = scaler_X.fit_transform(X_train)
         X_val_scaled   = scaler_X.transform(X_val)
         X_test_scaled  = scaler_X.transform(X_test)
 
         if args.scale_target:
-            scaler_y = StandardScaler()
+            scaler_y = RobustScaler()
             y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
             y_val_scaled   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
             y_test_scaled  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
@@ -845,22 +856,35 @@ def main(args: Args) -> None:
     # Optional: Save the best model’s weights
     ################################################################
     if args.save_model:
-        model_path = os.path.join(args.model_output_dir, f"best_model_{run_name}_{args.target_col}.pth")
-        save_dict = {"model_state_dict": best_model.state_dict()}
-        save_dict.update(custom_scalers)
-        torch.save(save_dict, model_path)
-        print(f"Saved best model to: {model_path}")
+        for i, seed_i in enumerate(args.seed):
+            model_path = os.path.join(args.model_output_dir, f"ensemble_model_seed_{seed_i}_{run_name}_{args.target_col}.pth")
+            save_dict = {
+                "model_state_dict": ensemble_models[i].state_dict(),
+                "seed": seed_i,
+                "val_loss": ensemble_val_losses[i],
+            }
+            save_dict.update(custom_scalers)
+            torch.save(save_dict, model_path)
+            print(f"Saved ensemble model for seed {seed_i} to: {model_path}")
+
 
     ################################################################
     # Plot train/val loss curves only for the best model’s logs
     ################################################################
     if args.plot_loss and len(args.seed) == 1:
-        # If there's only one seed, we can plot the train/val from that run.
-        # If you want to plot from the best model in a multi-seed scenario,
-        # you could store its train/val logs as well.
-        # For simplicity, we only do it for the single-seed case here.
-        pass
-        # ... the old plotting code for losses can go here if desired.
+        # For a single-seed run, plot the train and validation loss curves
+        plt.figure(figsize=(8, 6))
+        plt.plot(train_losses_i, label="Train Loss")
+        plt.plot(val_losses_i, label="Validation Loss")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Training and Validation Loss Curves")
+        plt.legend()
+        loss_plot_path = os.path.join(args.model_output_dir, f"loss_{run_name}.png")
+        plt.savefig(loss_plot_path)
+        plt.show()
+        print(f"Loss curves saved to: {loss_plot_path}")
+
 
     ################################################################
     # Visualization (structured only): shape overlays from best model
@@ -969,8 +993,8 @@ def main(args: Args) -> None:
 
         # If target was log-transformed, exponentiate
         if args.log_target:
-            test_preds_ensemble = np.exp(test_preds_ensemble) - 1e-8
-            test_trues = np.exp(test_trues) - 1e-8
+            test_preds_ensemble = np.exp(test_preds_ensemble) #- 1e-8
+            test_trues = np.exp(test_trues) #- 1e-8
 
         print("Test samples (avg ensemble):")
         for i in range(min(50, len(test_preds_ensemble))):  # show first 5
@@ -994,7 +1018,7 @@ def main(args: Args) -> None:
     if args.track:
         wandb.finish()
 
-    return
+    return ensemble_val_losses[best_model_idx]
 
 
 ###############################################################################
