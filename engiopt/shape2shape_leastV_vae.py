@@ -164,6 +164,26 @@ def nondimensionalize(df: pd.DataFrame, nondim_map: dict) -> pd.DataFrame:
         df_nd[col] = df_nd[col] / df_nd[ref]
     return df_nd
 
+def process_params(df: pd.DataFrame, param_cols: List[str]) -> pd.DataFrame:
+    """
+    Processes parameter columns:
+      - For each column in param_cols, if the column has fewer than 5 unique values,
+        apply one-hot encoding.
+      - Otherwise, keep the column as-is.
+    Returns a new DataFrame with the processed parameter columns.
+    """
+    processed_list = []
+    for col in param_cols:
+        if col not in df.columns:
+            raise ValueError(f"Parameter column {col} not found in DataFrame.")
+        # If the column is categorical (less than 5 unique values), one-hot encode it.
+        if df[col].nunique() < 5:
+            dummies = pd.get_dummies(df[col], prefix=col)
+            processed_list.append(dummies)
+        else:
+            processed_list.append(df[[col]])
+    return pd.concat(processed_list, axis=1)
+
 
 
 ###############################################################################
@@ -402,10 +422,14 @@ def main(args: Args) -> None:
         X_opt_all  = df[[c for c in df.columns if c.startswith(args.opt_col + "_")]].values
 
         # We also need param columns
-        for pcol in args.params_cols:
-            if pcol not in df.columns:
-                raise ValueError(f"Missing param col: {pcol}")
-        params_all = df[args.params_cols].values
+        #for pcol in args.params_cols:
+        #    if pcol not in df.columns:
+        #        raise ValueError(f"Missing param col: {pcol}")
+        #params_all = df[args.params_cols].values
+        params_df = process_params(df, args.params_cols)
+        print("Processed parameter columns:", params_df.columns.tolist())
+        params_all = params_df.values
+
 
         # Split
         Xinit_temp, Xinit_test, Xopt_temp, Xopt_test, params_temp, params_test, y_temp, y_test = train_test_split(
@@ -501,15 +525,18 @@ def main(args: Args) -> None:
         # For this example, let's do param columns only if shape is absent.
         feature_cols = []
         # If user gave param_cols, let's gather them:
-        for pcol in args.params_cols:
-            if pcol not in df.columns:
-                raise ValueError(f"Missing param col for unstructured mode: {pcol}")
-            feature_cols.append(pcol)
+        # Process parameter columns with automatic detection of categoricals
+        params_df = process_params(df, args.params_cols)
+        print("Processed parameter columns:", params_df.columns.tolist())
+        feature_cols = list(params_df.columns)
+
 
         # You could also add custom columns to feature_cols if you want
         # e.g., feature_cols.append('alpha')
 
-        X_features_all = df[feature_cols].values
+        #X_features_all = df[feature_cols].values
+        X_features_all = params_df.values
+
 
         X_temp, X_test, y_temp, y_test = train_test_split(
             X_features_all, y_all, test_size=args.test_size, random_state=args.seed
