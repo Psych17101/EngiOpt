@@ -402,9 +402,9 @@ def shape2shape_loss(x_opt_true, x_opt_pred, mu, logvar, z, cl_pred, cl_true,
                      lambda_lv=1e-2, gamma=1.0):
     cl_pred = cl_pred.view(-1)
     cl_true = cl_true.view(-1)
-    recon_loss = F.smooth_l1_loss(x_opt_pred, x_opt_true, reduction="mean")
+    recon_loss = F.mse_loss(x_opt_pred, x_opt_true, reduction="mean")
     lv_loss    = least_volume_loss(z)
-    sur_loss   = F.smooth_l1_loss(cl_pred, cl_true, reduction="mean")
+    sur_loss   = F.mse_loss(cl_pred, cl_true, reduction="mean")
     total_loss = recon_loss + lambda_lv * lv_loss + gamma * sur_loss
     return total_loss, recon_loss, lv_loss, sur_loss
 
@@ -504,7 +504,7 @@ def train_one_model(args,
             X_batch = X_batch.to(device)
             y_batch = y_batch.to(device)
             preds = model(X_batch).squeeze(-1)
-            loss = F.smooth_l1_loss(preds, y_batch)
+            loss = F.mse_loss(preds, y_batch)
             l2_pen = compute_l2_penalty(model)
             loss = loss + args.l2_lambda * l2_pen
             return loss, 0, 0, 0
