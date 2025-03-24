@@ -121,7 +121,7 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # THIS IS PROBLEM DEPENDENT
-            designs = data["optimized"]
+            designs = data["optimal_design"]
             designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs to a batch of 1D tensors with 1 channel
 
             # Learning
