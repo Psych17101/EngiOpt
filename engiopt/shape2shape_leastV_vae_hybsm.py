@@ -30,6 +30,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, RobustScaler
 
 import torch.nn.functional as F
+from model_pipeline import ModelPipeline, DataPreprocessor
+
 
 ###############################################################################
 # 1) Argument Parsing
@@ -634,7 +636,7 @@ def main(args: Args) -> None:
         print(df.head())
     else:
         raise ValueError("data_input must be a CSV or Parquet file.")
-    
+    """
     if args.strip_column_spaces:
         df = strip_column_spaces(df)
 
@@ -662,6 +664,12 @@ def main(args: Args) -> None:
     if args.flatten_columns:
         df = flatten_list_columns(df, args.flatten_columns)
         print("After flattening, df.columns:", df.columns.tolist())
+    """
+    # Create a temporary DataPreprocessor (no scalers needed yet, or pass None):
+    preprocessor = DataPreprocessor(vars(args))
+    # Now do the raw-data preprocessing:
+    #df = preprocessor.preprocess_dataframe(df)
+    processed_dict = preprocessor.transform_inputs(df, fit_params=True)
 
     have_shape_cols = (
         args.init_col != "" and args.opt_col != "" and
@@ -681,12 +689,19 @@ def main(args: Args) -> None:
     # Prepare data splits once (for all seeds)
     ################################################################
     if have_shape_cols and args.structured:
+        X_init_all = processed_dict["x_init"]  # shape Nx(whatever)
+        X_opt_all  = processed_dict["x_opt"]
+        params_all = processed_dict["params"]
+        """
         # Gather shape columns
         X_init_all = df[[c for c in df.columns if c.startswith(args.init_col + "_")]].values
         X_opt_all  = df[[c for c in df.columns if c.startswith(args.opt_col + "_")]].values
 
         # Split parameters into cont/cat
-        cont_df, cat_df = process_params_split(df, args.params_cols)
+        cont_df, cat_df = preprocessor.process_params_split(df, args.params_cols)
+        param_feature_names = list(cont_df.columns) + list(cat_df.columns)
+        # Update the preprocessor's args dictionary:
+        preprocessor.args["param_feature_names"] = param_feature_names
         print("Continuous param columns:", cont_df.columns.tolist())
         print("Categorical param columns:", cat_df.columns.tolist())
 
@@ -697,6 +712,7 @@ def main(args: Args) -> None:
             cont_values = np.empty((len(df), 0))
 
         cat_values = cat_df.values if not cat_df.empty else np.empty((len(df), 0))
+        """
         params_all = np.hstack([cont_values, cat_values])
         num_cont = cont_values.shape[1]
         num_cat  = cat_values.shape[1]
@@ -765,7 +781,10 @@ def main(args: Args) -> None:
 
     else:
         # Unstructured MLP
-        cont_df, cat_df = process_params_split(df, args.params_cols)
+        cont_df, cat_df = preprocessor.process_params_split(df, args.params_cols)
+        param_feature_names = list(cont_df.columns) + list(cat_df.columns)
+        # Update the preprocessor's args dictionary:
+        preprocessor.args["param_feature_names"] = param_feature_names
         print("Continuous param columns:", cont_df.columns.tolist())
         print("Categorical param columns:", cat_df.columns.tolist())
 
@@ -855,6 +874,29 @@ def main(args: Args) -> None:
     ################################################################
     # Optional: Save the best model’s weights
     ################################################################
+    # After training and data splitting, you have custom_scalers and ensemble_models.
+    pipeline_metadata = {"args": vars(args), "param_feature_names": param_feature_names}
+    # Instantiate the preprocessor with training args (as a dict) and scalers
+    #preprocessor = DataPreprocessor(vars(args), custom_scalers)
+
+    pipeline = ModelPipeline(
+        models=ensemble_models,  # your trained (and chosen) model(s)
+        scalers=custom_scalers,  # the final fitted scalers
+        structured=args.structured,
+        log_target=args.log_target,
+        metadata=pipeline_metadata,
+        preprocessor=preprocessor,
+    )
+
+    #pipeline.to_device(device)
+
+    pipeline_path = os.path.join(args.model_output_dir, f"final_pipeline_{run_name}.pkl")
+    pipeline.save(pipeline_path, device)
+    print(f"Saved pipeline to {pipeline_path}")
+
+
+
+    """
     if args.save_model:
         for i, seed_i in enumerate(args.seed):
             model_path = os.path.join(args.model_output_dir, f"ensemble_model_seed_{seed_i}_{run_name}_{args.target_col}.pth")
@@ -865,7 +907,8 @@ def main(args: Args) -> None:
             }
             save_dict.update(custom_scalers)
             torch.save(save_dict, model_path)
-            print(f"Saved ensemble model for seed {seed_i} to: {model_path}")
+            print(f"Saved ensemble model for seed {seed_i} to: {model_path}")"
+    """
 
 
     ################################################################
