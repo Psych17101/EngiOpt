@@ -724,7 +724,7 @@ def main(args: Args):
     )
 
     pipeline_filename = os.path.join(args.model_output_dir,
-                                     f"final_pipeline_{run_name}.pkl")
+                                     f"final_pipeline_{run_name}_tgt_{args.target_col}.pkl")
     pipeline.save(pipeline_filename, device=device)
     print(f"Saved pipeline to {pipeline_filename}")
 
