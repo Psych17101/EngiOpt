@@ -18,6 +18,7 @@ import numpy as np
 import torch as th
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -175,9 +176,8 @@ if __name__ == "__main__":
                         }
 
                         th.save(ckpt, "model.pth")
-                        artifact = wandb.Artifact(f"{args.algo}_model", type="model")
+                        artifact = wandb.Artifact(f"{args.problem_id}_{args.algo}_diffusion", type="model")
                         artifact.add_file("model.pth")
-
                         wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()

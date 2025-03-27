@@ -57,10 +57,12 @@ class Args:
     """number of cpu threads to use during batch generation"""
     latent_dim: int = 100
     """dimensionality of the latent space"""
-    n_objs: int = 7
-    """number of objectives -- used as conditional input"""
     sample_interval: int = 400
     """interval between image samples"""
+
+
+
+   
 
 class Generator(nn.Module):
     """
@@ -68,25 +70,25 @@ class Generator(nn.Module):
     from noise + condition.
 
     Args:
-        z_dim (int): Dimensionality of the noise (latent) vector.
-        cond_features (int): Number of conditional features (channels) 
+        latent_dim (int): Dimensionality of the noise (latent) vector.
+        n_conds (int): Number of conditional features (channels) 
                              that will be given as (B, cond_features, 1, 1).
         num_filters (list of int): Number of filters in each upsampling stage.
                                    E.g., [256, 128, 64, 32].
         out_channels (int): Number of output channels in the final image (e.g. 3 for RGB).
     """
-    def __init__(self, z_dim=100, cond_features=1, num_filters=[256, 128, 64, 32], out_channels=1):
+    def __init__(self, latent_dim, n_conds, design_shape, num_filters=[256, 128, 64, 32], out_channels=1):
         super(Generator, self).__init__()
-
+        self.design_shape = design_shape  # Store design shape
         # Path for noise z
         self.z_path = nn.Sequential(
-            nn.ConvTranspose2d(z_dim, num_filters[0] // 2, kernel_size=7, stride=1, padding=0, bias=False),
+            nn.ConvTranspose2d(latent_dim, num_filters[0] // 2, kernel_size=7, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(num_filters[0] // 2),
             nn.ReLU(True)
         )
         # Path for condition c
         self.c_path = nn.Sequential(
-            nn.ConvTranspose2d(cond_features, num_filters[0] // 2, kernel_size=7, stride=1, padding=0, bias=False),
+            nn.ConvTranspose2d(n_conds, num_filters[0] // 2, kernel_size=7, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(num_filters[0] // 2),
             nn.ReLU(True)
         )
@@ -134,7 +136,7 @@ class Generator(nn.Module):
         out = self.up_blocks(x)  # -> (B, out_channels, 100, 100)
 
         # Resize Image
-        out = transforms.Resize((design_shape[0], design_shape[1]))(out)
+        out = transforms.Resize((self.design_shape[0], self.design_shape[1]))(out)
         return out
 
 
@@ -145,13 +147,13 @@ class Discriminator(nn.Module):
     and outputs a real/fake score in [0, 1].
     
     Args:
+        n_conds (int): Number of conditional channels to pass in parallel.
         in_channels (int): Number of channels in real images (e.g. 3 for RGB).
-        cond_features (int): Number of conditional channels to pass in parallel.
         num_filters (list of int): Number of filters in each downsampling stage.
                                    E.g., [32, 64, 128, 256].
         out_channels (int): Typically 1 for final real/fake score (sigmoid).
     """
-    def __init__(self, in_channels=1, cond_features=1, num_filters=[32, 64, 128, 256], out_channels=1):
+    def __init__(self, n_conds, in_channels=1, num_filters=[32, 64, 128, 256], out_channels=1):
         super(Discriminator, self).__init__()
 
         # Path for real image
@@ -161,7 +163,7 @@ class Discriminator(nn.Module):
         )
         # Path for condition
         self.cond_path = nn.Sequential(
-            nn.Conv2d(cond_features, num_filters[0] // 2, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.Conv2d(n_conds, num_filters[0] // 2, kernel_size=4, stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2, inplace=True)
         )
 
@@ -222,7 +224,8 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
-    design_shape = (200,100)
+    design_shape = problem.design_space.shape
+    n_conds = len(problem.conditions)
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -248,8 +251,8 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator()
-    discriminator = Discriminator()
+    generator = Generator(args.latent_dim, n_conds, design_shape)
+    discriminator = Discriminator(n_conds)
 
     generator.to(device)
     discriminator.to(device)
@@ -257,10 +260,9 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    filtered_ds = th.zeros(len(training_ds), 1, design_shape[0], design_shape[1], device=device)
-    for i in range(len(training_ds)):
-        filtered_ds[i, 0] = transforms.Resize((design_shape[0], design_shape[1]))(training_ds[i]['optimal_design'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
-    training_ds = th.utils.data.TensorDataset(filtered_ds.flatten(1), training_ds['volfrac'])
+    training_ds = th.utils.data.TensorDataset(training_ds['optimal_design'].flatten(1), 
+                                              *[training_ds[key] for key, _ in problem.conditions]
+                                              )
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -292,7 +294,7 @@ if __name__ == "__main__":
             # THIS IS PROBLEM DEPENDENT
             designs = data[0]
 
-            objs = th.stack((data[1:]), dim=1).reshape(-1, 1, 1, 1)
+            objs = th.stack((data[1:]), dim=1).reshape(-1, n_conds, 1, 1)
 
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
@@ -392,9 +394,9 @@ if __name__ == "__main__":
 
                         th.save(ckpt_gen, "generator.pth")
                         th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact(f"{args.algo}_generator", type="model")
+                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
                         artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.algo}_discriminator", type="model")
+                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
                         artifact_disc.add_file("discriminator.pth")
 
                         wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])

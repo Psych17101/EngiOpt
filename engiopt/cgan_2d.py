@@ -26,7 +26,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "beams2d"
+    problem_id: str = "heatconduction2d"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -58,17 +58,16 @@ class Args:
     """number of cpu threads to use during batch generation"""
     latent_dim: int = 100
     """dimensionality of the latent space"""
-    n_objs: int = 7
-    """number of objectives -- used as conditional input"""
     sample_interval: int = 400
     """interval between image samples"""
 
 
 class Generator(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_dim: int, n_conds: int, design_shape: tuple):
         super().__init__()
-
-        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:  # noqa: FBT001, FBT002
+        self.design_shape = design_shape  # Store design shape
+        
+        def block(in_feat: int, out_feat: int, normalize: bool = True):
             layers = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
@@ -76,7 +75,7 @@ class Generator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *block(args.latent_dim + args.n_objs, 128, normalize=False),
+            *block(latent_dim + n_conds, 128, normalize=False),
             *block(128, 256),
             *block(256, 512),
             *block(512, 1024),
@@ -84,11 +83,10 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z: th.Tensor, objs: th.Tensor) -> th.Tensor:  # noqa: D102
-        # Concatenate noise and objs to produce input
+    def forward(self, z: th.Tensor, objs: th.Tensor) -> th.Tensor:
         gen_input = th.cat((z, objs), -1)
         design = self.model(gen_input)
-        design = design.view(design.size(0), *design_shape)
+        design = design.view(design.size(0), *self.design_shape)
         return design
 
 
@@ -97,7 +95,7 @@ class Discriminator(nn.Module):
         super().__init__()
 
         self.model = nn.Sequential(
-            nn.Linear(int(np.prod(design_shape)) + args.n_objs, 512),
+            nn.Linear(int(np.prod(design_shape)) + n_conds, 512),  
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(512, 512),
             nn.Dropout(0.4),
@@ -109,11 +107,10 @@ class Discriminator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, design: th.Tensor, objs: th.Tensor) -> th.Tensor:  # noqa: D102
+    def forward(self, design: th.Tensor, objs: th.Tensor) -> th.Tensor:
         design_flat = design.view(design.size(0), -1)
         d_in = th.cat((design_flat, objs), -1)
         validity = self.model(d_in)
-
         return validity
 
 
@@ -123,7 +120,8 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
-    design_shape = (200,100)
+    design_shape = problem.design_space.shape
+    n_conds = len(problem.conditions)
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -149,7 +147,7 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator()
+    generator = Generator(args.latent_dim, n_conds, design_shape)
     discriminator = Discriminator()
 
     generator.to(device)
@@ -158,13 +156,10 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    filtered_ds = th.zeros(len(training_ds), design_shape[0], design_shape[1], device=device)
-    for i in range(len(training_ds)):
-        filtered_ds[i] = transforms.Resize((design_shape[0], design_shape[1]))(training_ds[i]['optimal_design'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
-    training_ds = th.utils.data.TensorDataset(filtered_ds.flatten(1), training_ds['volfrac'],
-                                              training_ds['penal'], training_ds['rmin'],
-                                              training_ds['ft'], training_ds['max_iter'],
-                                              training_ds['overhang_constraint'], training_ds['c'])
+    
+    training_ds = th.utils.data.TensorDataset(training_ds['optimal_design'].flatten(1), 
+                                              *[training_ds[key] for key, _ in problem.conditions]
+                                              )
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -296,9 +291,9 @@ if __name__ == "__main__":
 
                         th.save(ckpt_gen, "generator.pth")
                         th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact(f"{args.algo}_generator", type="model")
+                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
                         artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.algo}_discriminator", type="model")
+                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
                         artifact_disc.add_file("discriminator.pth")
 
                         wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])

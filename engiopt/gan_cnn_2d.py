@@ -14,10 +14,11 @@ from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
-import torchvision.transforms as transforms
 from torch import nn
+from torchvision import transforms
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -60,8 +61,9 @@ class Args:
     sample_interval: int = 400
     """interval between image samples"""
 
+
 class Generator(nn.Module):
-    def __init__(self, latent_dim=100, out_channels=1, g_features=64):
+    def __init__(self, latent_dim, out_channels=1, g_features=64):
         """Generator for 100x100 images.
 
         Args:
@@ -77,38 +79,21 @@ class Generator(nn.Module):
         self.conv_blocks = nn.Sequential(
             # (g_features*4, 25, 25) -> (g_features*2, 50, 50)
             nn.ConvTranspose2d(
-                in_channels=g_features * 4,
-                out_channels=g_features * 2,
-                kernel_size=4,
-                stride=2,
-                padding=1,
-                bias=False
+                in_channels=g_features * 4, out_channels=g_features * 2, kernel_size=4, stride=2, padding=1, bias=False
             ),
             nn.BatchNorm2d(g_features * 2),
             nn.ReLU(True),
-
             # (g_features*2, 50, 50) -> (g_features, 100, 100)
             nn.ConvTranspose2d(
-                in_channels=g_features * 2,
-                out_channels=g_features,
-                kernel_size=4,
-                stride=2,
-                padding=1,
-                bias=False
+                in_channels=g_features * 2, out_channels=g_features, kernel_size=4, stride=2, padding=1, bias=False
             ),
             nn.BatchNorm2d(g_features),
             nn.ReLU(True),
-
             # (g_features, 100, 100) -> (out_channels, 100, 100)
             nn.ConvTranspose2d(
-                in_channels=g_features,
-                out_channels=out_channels,
-                kernel_size=3,
-                stride=1,
-                padding=1,
-                bias=False
+                in_channels=g_features, out_channels=out_channels, kernel_size=3, stride=1, padding=1, bias=False
             ),
-            nn.Tanh()
+            nn.Tanh(),
         )
 
     def forward(self, z):
@@ -120,7 +105,6 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-
     def __init__(self, in_channels=1, d_features=64):
         super().__init__()
 
@@ -133,61 +117,22 @@ class Discriminator(nn.Module):
         """
         self.conv_blocks = nn.Sequential(
             # 100 x 100 -> 50 x 50
-            nn.Conv2d(
-                in_channels,
-                d_features,
-                kernel_size=4,
-                stride=2,
-                padding=1,
-                bias=False
-            ),
+            nn.Conv2d(in_channels, d_features, kernel_size=4, stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
-
             # 50 x 50 -> 25 x 25
-            nn.Conv2d(
-                d_features,
-                d_features * 2,
-                kernel_size=4,
-                stride=2,
-                padding=1,
-                bias=False
-            ),
+            nn.Conv2d(d_features, d_features * 2, kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(d_features * 2),
             nn.LeakyReLU(0.2, inplace=True),
-
             # 25 x 25 -> 13 x 13
-            nn.Conv2d(
-                d_features * 2,
-                d_features * 4,
-                kernel_size=3,
-                stride=2,
-                padding=1,
-                bias=False
-            ),
+            nn.Conv2d(d_features * 2, d_features * 4, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(d_features * 4),
             nn.LeakyReLU(0.2, inplace=True),
-
             # 13 x 13 -> 7 x 7
-            nn.Conv2d(
-                d_features * 4,
-                d_features * 8,
-                kernel_size=3,
-                stride=2,
-                padding=1,
-                bias=False
-            ),
+            nn.Conv2d(d_features * 4, d_features * 8, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(d_features * 8),
             nn.LeakyReLU(0.2, inplace=True),
-
             # 7 x 7 -> 1 x 1
-            nn.Conv2d(
-                d_features * 8,
-                1,
-                kernel_size=7,
-                stride=1,
-                padding=0,
-                bias=False
-            )
+            nn.Conv2d(d_features * 8, 1, kernel_size=7, stride=1, padding=0, bias=False),
         )
 
         # Final output activation
@@ -195,7 +140,7 @@ class Discriminator(nn.Module):
 
     def forward(self, img):
         # img: (batch, in_channels, 100, 100)
-        out = self.conv_blocks(img)  
+        out = self.conv_blocks(img)
         # out: (batch, 1, 1, 1)
         out = out.view(out.size(0), -1)  # flatten to (batch, 1)
         validity = self.output_act(out)
@@ -244,7 +189,7 @@ if __name__ == "__main__":
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
     filtered_ds = th.zeros(len(training_ds), 100, 100, device=device)
     for i in range(len(training_ds)):
-        filtered_ds[i] = transforms.Resize((100, 100))(training_ds[i]['optimal_design'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
+        filtered_ds[i] = transforms.Resize((100, 100))(training_ds[i]['optimal_design'].reshape(1, design_shape[0], design_shape[1]))
     filtered_ds = filtered_ds.unsqueeze(1)
     dataloader = th.utils.data.DataLoader(
         filtered_ds,
@@ -357,11 +302,13 @@ if __name__ == "__main__":
 
                         th.save(ckpt_gen, "generator.pth")
                         th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact(f"{args.algo}_generator", type="model")
+                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
                         artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.algo}_discriminator", type="model")
+                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
                         artifact_disc.add_file("discriminator.pth")
 
+                        wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                        wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
                         wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
                         wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 

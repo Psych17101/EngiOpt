@@ -18,6 +18,7 @@ from torch import nn
 import torchvision.transforms as transforms
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -60,11 +61,13 @@ class Args:
     sample_interval: int = 400
     """interval between image samples"""
 
-class Generator(nn.Module):
-    def __init__(self):
-        super(Generator, self).__init__()
 
-        def block(in_feat, out_feat, normalize=True):
+class Generator(nn.Module):
+    def __init__(self, latent_dim: int, design_shape: tuple):
+        super().__init__()
+        self.design_shape = design_shape  # Store design shape
+
+        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:
             layers = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
@@ -72,17 +75,17 @@ class Generator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *block(args.latent_dim, 128, normalize=False),
+            *block(latent_dim, 128, normalize=False),
             *block(128, 256),
             *block(256, 512),
             *block(512, 1024),
             nn.Linear(1024, int(np.prod(design_shape))),
-            nn.Tanh()
+            nn.Tanh(),
         )
 
     def forward(self, z):
         img = self.model(z)
-        img = img.view(img.size(0), *design_shape)
+        img = img.view(img.size(0), *self.design_shape)
         return img
 
 
@@ -105,13 +108,14 @@ class Discriminator(nn.Module):
 
         return validity
 
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
-    design_shape = (100, 100)
+    design_shape = problem.design_space.shape
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -137,7 +141,7 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator()
+    generator = Generator(args.latent_dim, design_shape)
     discriminator = Discriminator()
 
     generator.to(device)
@@ -146,13 +150,10 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    filtered_ds = th.zeros(len(training_ds), 100, 100, device=device)
-    for i in range(len(training_ds)):
-        filtered_ds[i] = transforms.Resize((100, 100))(training_ds[i]['xPrint'].reshape(1, training_ds[i]['nelx'], training_ds[i]['nely']))
-
-    # print(training_ds.shape)
+    
+    training_ds = th.utils.data.TensorDataset(training_ds['optimal_design'].flatten(1))
     dataloader = th.utils.data.DataLoader(
-        filtered_ds,
+        training_ds,
         batch_size=args.batch_size,
         shuffle=True,
     )
@@ -161,11 +162,22 @@ if __name__ == "__main__":
     optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
     optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
 
+    @th.no_grad()
+    def sample_designs(n_designs: int) -> th.Tensor:
+        """Samples n_designs from the generator."""
+        # Sample noise
+        z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
+        # THESE BOUNDS ARE PROBLEM DEPENDENT
+        gen_imgs = generator(z)
+        return gen_imgs
+    
     # ----------
     #  Training
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
-        for i, designs in enumerate(dataloader):
+        for i, data in enumerate(dataloader):
+            designs = data[0]
+            print(designs.shape)
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
             fake = th.zeros((designs.size(0), 1), requires_grad=False, device=device)
@@ -222,16 +234,16 @@ if __name__ == "__main__":
                 # This saves a grid image of 25 generated designs every sample_interval
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
-                    tensors = gen_designs.data[:25]
+                    designs = sample_designs(25)
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
                     # Flatten axes for easy indexing
                     axes = axes.flatten()
 
-                    # Plot each tensor as a iamge plot
-                    for j, tensor in enumerate(tensors):
-                        img = tensor.cpu()  # Extract x and y coordinates
-                        axes[j].imshow(img.reshape(100,100))  # image plot
+                    # Plot each tensor as a scatter plot
+                    for j, tensor in enumerate(designs):
+                        img = tensor.cpu().numpy()  # Extract x and y coordinates
+                        axes[j].imshow(img)  # Scatter plot
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 
@@ -262,9 +274,9 @@ if __name__ == "__main__":
 
                         th.save(ckpt_gen, "generator.pth")
                         th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact(f"{args.algo}_generator", type="model")
+                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
                         artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.algo}_discriminator", type="model")
+                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
                         artifact_disc.add_file("discriminator.pth")
 
                         wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])

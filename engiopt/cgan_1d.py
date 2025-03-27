@@ -18,6 +18,7 @@ import torch as th
 from torch import nn
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -43,7 +44,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 200
+    n_epochs: int = 600
     """number of epochs of training"""
     batch_size: int = 64
     """size of the batches"""
@@ -64,7 +65,7 @@ class Args:
 
 
 class Generator(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_dim: int, n_objs: int, design_shape: tuple):
         super().__init__()
 
         def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:  # noqa: FBT001, FBT002
@@ -75,7 +76,7 @@ class Generator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *block(args.latent_dim + args.n_objs, 128, normalize=False),
+            *block(latent_dim + n_objs, 128, normalize=False),
             *block(128, 256),
             *block(256, 512),
             *block(512, 1024),
@@ -148,7 +149,7 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator()
+    generator = Generator(args.latent_dim, args.n_objs, design_shape)
     discriminator = Discriminator()
 
     generator.to(device)
@@ -291,9 +292,9 @@ if __name__ == "__main__":
 
                         th.save(ckpt_gen, "generator.pth")
                         th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact(f"{args.algo}_generator", type="model")
+                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
                         artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.algo}_discriminator", type="model")
+                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
                         artifact_disc.add_file("discriminator.pth")
 
                         wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
