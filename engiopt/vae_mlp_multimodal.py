@@ -1,37 +1,83 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
+
+"""Shape-to-Shape VAE + Surrogate Model Training and Evaluation.
+
+This script demonstrates a multi-stage pipeline for training a Variational Autoencoder (VAE) 
+on shape-based design data, optionally followed by a surrogate model to predict a target 
+metric (e.g., lift coefficient). It can also operate in a "plain MLP" mode where shape 
+information is absent.
+
+Main Features:
+  1. **Data Preprocessing**:
+     - Reads CSV or Parquet data containing shape and/or tabular columns.
+     - Splits data into train, validation, and test sets.
+     - Optionally scales inputs and target values using robust scalers.
+
+  2. **Flexible Model Architecture**:
+     - Structured mode (Shape2ShapeVAE): Encodes initial shape into a latent code, 
+       decodes to predict an optimized shape, and uses a surrogate network for target prediction.
+     - Plain MLP: Trains a simple feedforward neural network on tabular data only.
+
+  3. **Hyperparameter Control**:
+     - Parameters such as hidden size, number of layers, choice of optimizer, learning rate, 
+       etc. are specified via command-line arguments (using Tyro CLI).
+
+  4. **Ensembling**:
+     - The `seed` argument can be a list of integers; each seed trains a separate instance of 
+       the model. At inference time, predictions are averaged to produce an ensemble result.
+
+  5. **Tracking & Visualization**:
+     - If `track` is enabled, logs training/validation metrics to Weights & Biases (wandb).
+     - Optionally plots and saves training curves, predicted vs. true scatter plots, 
+       and shape overlay comparisons (structured mode only).
+
+  6. **Usage**:
+     - Invoke via `python script_name.py --help` for command-line options.
+     - Typical arguments include data file paths, hyperparameters, and boolean flags 
+       for structured vs. unstructured modes.
+
+Key Steps:
+  - Parse command-line arguments.
+  - Read and preprocess data (flatten lists, scale features).
+  - Build PyTorch datasets and dataloaders for train/val/test.
+  - Train and validate model(s) for one or multiple random seeds.
+  - If multiple seeds are provided, ensemble predictions are produced.
+  - Save final pipeline (model + scalers) and generate optional plots.
+
+Note:
+  - Requires `pandas`, `numpy`, `torch`, `matplotlib`, `tyro`, `wandb`, and `sklearn`.
+  - Expects a consistent format for shape columns if `structured` is enabled.
 
 """
-Shape-to-Shape VAE + Surrogate Example (Optionally skipping shapes entirely)
 
-Added ensembling:
- 1) The 'seed' argument can be a list of integers.
- 2) Each seed trains a separate model with the same hyperparameters (but different random inits).
- 3) In evaluation, the predictions of all models are averaged to get the final result.
- 4) Everything else remains the same.
-"""
-
-import os
-import time
+# Standard library imports
 import ast
+from dataclasses import dataclass
+from dataclasses import field
+import os
 import random
+import time
+from typing import List, Literal, Optional, Tuple
+
+from matplotlib import pyplot as plt
+from model_pipeline import DataPreprocessor
+
+# Local application/library specific imports
+from model_pipeline import ModelPipeline
+
+# Third-party imports
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass, field
-from typing import List, Literal, Optional
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import tyro
-import wandb
-from matplotlib import pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import RobustScaler
-
+import torch
+from torch import nn
+from torch import optim
 import torch.nn.functional as F
-# Import our pipeline code
-from model_pipeline import ModelPipeline, DataPreprocessor
+import tyro
+
+import wandb
+
 
 ###############################################################################
 # 1) Argument Parsing
@@ -57,6 +103,8 @@ class Args:
     subset_condition: Optional[str] = None  # e.g. "r > 0"
 
     nondim_map: Optional[str] = None  # e.g. '{"colA":"refColA","colB":"refColB"}'
+
+    split_random_state: int = 999
 
     # VAE + surrogate vs. plain MLP
     structured: bool = True
@@ -119,19 +167,60 @@ class Args:
                     raise ValueError(f"Invalid format for --{field_name}: {value}")
 
 ###############################################################################
-# 2) Utilities (unchanged placeholders if you want them)
+# 2) Utilities
 ###############################################################################
 # e.g. flatten_list_columns, etc., if you want them. But we rely on DataPreprocessor now.
 def compute_l2_penalty(model: nn.Module) -> torch.Tensor:
-    l2_norm = 0.0
+    """Computes the L2 penalty (sum of squared parameters) for a given model.
+
+    This is often added to the total loss to encourage smaller parameter magnitudes 
+    (i.e., L2 regularization or weight decay).
+
+    Args:
+        model (nn.Module): The PyTorch model for which to compute the L2 penalty.
+
+    Returns:
+        torch.Tensor: A scalar tensor representing the sum of the squared parameter values.
+    """
+    device = next(model.parameters()).device
+    l2_norm = torch.zeros(1, device=device)
     for param in model.parameters():
-        l2_norm += torch.sum(param ** 2)
+        l2_norm += (param ** 2).sum()
     return l2_norm
+
+
+def invert_and_pair(scaler, tensor: torch.Tensor) -> np.ndarray:
+    """Inverts scaling for a 1D flattened shape array and splits it into (x, y) coordinates.
+
+    This is used primarily for visualizing shapes in 2D after they've been scaled 
+    and flattened for the model input.
+
+    Args:
+        scaler: A fitted scaler (e.g., sklearn.preprocessing.RobustScaler) with 
+            an `inverse_transform` method.
+        tensor (torch.Tensor): A 1D tensor representing flattened shape coordinates.
+
+    Returns:
+        np.ndarray: A 2D array of shape (n_points, 2) where each row is an (x, y) pair.
+    """
+    arr = scaler.inverse_transform(tensor.cpu().numpy().reshape(1, -1)).flatten()
+    n = arr.shape[0] // 2
+    x_coords = arr[:n]
+    y_coords = arr[n:]
+    return np.column_stack((x_coords, y_coords))
 
 ###############################################################################
 # 3) Datasets
 ###############################################################################
 class Shape2ShapeWithParamsDataset(torch.utils.data.Dataset):
+    """Dataset for structured shape data with parameters and target values.
+
+    Attributes:
+        X_init: Initial design shapes.
+        X_opt: Optimized design shapes.
+        params: Additional parameter values.
+        y: Target values.
+    """
     def __init__(self, init_array, opt_array, params_array, cl_array):
         self.X_init = torch.from_numpy(init_array).float()
         self.X_opt  = torch.from_numpy(opt_array).float()
@@ -139,25 +228,31 @@ class Shape2ShapeWithParamsDataset(torch.utils.data.Dataset):
         self.y      = torch.from_numpy(cl_array).float()
         if self.X_init.shape[1] != self.X_opt.shape[1]:
             raise ValueError("init_design and opt_design must have same dimension.")
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.X_init)
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         return self.X_init[idx], self.X_opt[idx], self.params[idx], self.y[idx]
 
 class PlainTabularDataset(torch.utils.data.Dataset):
+    """A simple dataset for plain tabular data (no shape columns).
+
+    Args:
+        X: NumPy array of input features.
+        y: NumPy array of target values.
+    """
     def __init__(self, X, y):
         self.X = torch.from_numpy(X).float()
         self.y = torch.from_numpy(y).float()
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.X)
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.X[idx], self.y[idx]
-    
+
 ###############################################################################
 # 4) Model Definitions
 ###############################################################################
 
-def make_activation(name: str):
+def make_activation(name: str) -> nn.Module:
     if name == "relu":
         return nn.ReLU()
     elif name == "leakyrelu":
@@ -196,8 +291,7 @@ def make_mlp(input_dim: int, hidden_layers: int, hidden_size: int,
     return nn.Sequential(*layers)
 
 class HybridSurrogate(nn.Module):
-    """
-    A hybrid surrogate network that processes continuous parameters and categorical
+    """A hybrid surrogate network that processes continuous parameters and categorical
     (one-hot encoded) parameters separately, then combines them with the latent code.
     """
     def __init__(self, latent_dim: int, cont_dim: int, cat_dim: int,
@@ -241,8 +335,7 @@ class HybridSurrogate(nn.Module):
         return self.combined(combined)
 
 class Shape2ShapeVAE(nn.Module):
-    """
-    Structured mode VAE with surrogate.
+    """Structured mode VAE with surrogate.
     If categorical parameters are present (i.e. cat_dim > 0), a hybrid surrogate is used.
     """
     def __init__(self, shape_dim: int, cont_dim: int, cat_dim: int, latent_dim: int = 32,
@@ -282,17 +375,17 @@ class Shape2ShapeVAE(nn.Module):
                                        hidden_size=surrogate_hidden_size,
                                        activation=surrogate_activation,
                                        output_dim=1)
-    def encode(self, x_init):
+    def encode(self, x_init: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         h = self.encoder(x_init)
         mu, logvar = torch.chunk(h, 2, dim=1)
         return mu, logvar
-    def reparameterize(self, mu, logvar):
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
-    def decode(self, z):
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
         return self.decoder(z)
-    def forward(self, x_init, param_vec):
+    def forward(self, x_init: torch.Tensor, param_vec: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, logvar = self.encode(x_init)
         z = self.reparameterize(mu, logvar)
         x_opt_pred = self.decode(z)
@@ -310,13 +403,51 @@ class Shape2ShapeVAE(nn.Module):
 # 5) Loss Function
 ###############################################################################
 
-def least_volume_loss(z, eta=1e-3):
+def least_volume_loss(z: torch.Tensor, eta: float = 1e-3) -> torch.Tensor:
+    """Computes a 'least volume' regularization term for the latent code.
+
+    The idea is to encourage the latent space to be compact by calculating 
+    an approximate volume based on the standard deviations of each latent dimension.
+
+    Args:
+        z (torch.Tensor): The latent code tensor, typically shape (batch_size, latent_dim).
+        eta (float, optional): A small constant to avoid taking the log of zero. Defaults to 1e-3.
+
+    Returns:
+        torch.Tensor: A scalar tensor representing the least-volume term.
+    """
     std_z = torch.std(z, dim=0) + eta
     volume = torch.exp(torch.mean(torch.log(std_z)))
     return volume
 
-def shape2shape_loss(x_opt_true, x_opt_pred, mu, logvar, z, cl_pred, cl_true,
-                     lambda_lv=1e-2, gamma=1.0):
+def shape2shape_loss(x_opt_true: torch.Tensor, x_opt_pred: torch.Tensor,
+                     mu: torch.Tensor, logvar: torch.Tensor, z: torch.Tensor,
+                     cl_pred: torch.Tensor, cl_true: torch.Tensor,
+                     lambda_lv: float = 1e-2, gamma: float = 1.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Computes the total loss for the Shape2ShapeVAE, including:
+      - Reconstruction loss between the true optimized shape and the predicted shape.
+      - A 'least volume' regularization term for the latent space.
+      - A surrogate loss between the predicted target and true target.
+      - Optionally scaled by `gamma` for the surrogate and `lambda_lv` for the latent volume term.
+
+    Args:
+        x_opt_true (torch.Tensor): Ground-truth optimized shape, shape (batch_size, shape_dim).
+        x_opt_pred (torch.Tensor): Predicted optimized shape from the VAE decoder.
+        mu (torch.Tensor): Mean of the latent distribution from the encoder.
+        logvar (torch.Tensor): Log-variance of the latent distribution from the encoder.
+        z (torch.Tensor): Latent code sampled via reparameterization.
+        cl_pred (torch.Tensor): Predicted target metric (e.g., lift coefficient).
+        cl_true (torch.Tensor): True target metric.
+        lambda_lv (float, optional): Scaling factor for the least-volume term. Defaults to 1e-2.
+        gamma (float, optional): Scaling factor for the surrogate loss. Defaults to 1.0.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        - total_loss: Sum of reconstruction, least-volume, and surrogate losses (with scaling).
+        - recon_loss: The MSE reconstruction loss for shape prediction.
+        - lv_loss: The least-volume loss on the latent space.
+        - sur_loss: The MSE loss between predicted and true target values.
+    """
     cl_pred = cl_pred.view(-1)
     cl_true = cl_true.view(-1)
     recon_loss = F.mse_loss(x_opt_pred, x_opt_true, reduction="mean")
@@ -329,9 +460,8 @@ def shape2shape_loss(x_opt_true, x_opt_pred, mu, logvar, z, cl_pred, cl_true,
 # 6) Train/Eval helpers
 ###############################################################################
 
-def make_optimizer(name: str, params, lr: float):
-    """
-    Extend or modify as needed if you want more optimizer options. 
+def make_optimizer(name: str, params, lr: float) -> torch.optim.Optimizer:
+    """Extend or modify as needed if you want more optimizer options.
     For brevity, only demonstrates 'sgd' and 'adam'.
     """
     if name == "sgd":
@@ -359,16 +489,15 @@ def make_optimizer(name: str, params, lr: float):
 # 7) Main Training & Evaluation
 ###############################################################################
 
-def train_one_model(args, 
-                    train_loader, 
-                    val_loader, 
-                    have_shape_cols, 
-                    shape_dim, 
-                    num_cont, 
-                    num_cat,
-                    device):
-    """
-    Given the train/val data loaders, create and train one model, 
+def train_one_model(args: Args,
+                    train_loader: torch.utils.data.DataLoader,
+                    val_loader: torch.utils.data.DataLoader,
+                    have_shape_cols: bool,
+                    shape_dim: Optional[int],
+                    num_cont: int,
+                    num_cat: int,
+                    device: torch.device) -> Tuple[nn.Module, Tuple[List[float], List[float]], float]:
+    """Given the train/val data loaders, create and train one model,
     returning the best model (state dict) and training curves.
     """
     if have_shape_cols and args.structured:
@@ -383,7 +512,28 @@ def train_one_model(args,
             surrogate_activation=args.activation
         ).to(device)
 
-        def train_step(x_init_batch, x_opt_batch, param_batch, cl_batch):
+        def train_step_vae_mlp(x_init_batch, x_opt_batch, param_batch, cl_batch):
+            """Performs a single training step for the Shape2ShapeVAE + surrogate model.
+
+            1) Moves the batch tensors to the specified device.
+            2) Runs a forward pass to get reconstructed shape and predicted target.
+            3) Calculates shape reconstruction loss, least-volume loss, and surrogate loss.
+            4) Adds L2 penalty to the total loss.
+            5) Returns the total loss and intermediate losses for logging.
+
+            Args:
+                x_init_batch (torch.Tensor): Initial shape batch.
+                x_opt_batch (torch.Tensor): True optimized shape batch.
+                param_batch (torch.Tensor): Parameter batch (continuous and/or categorical).
+                cl_batch (torch.Tensor): True target batch.
+
+            Returns:
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                - total_loss: Combined loss including reconstruction, surrogate, and L2 penalty.
+                - recon_loss: Shape reconstruction loss.
+                - lv_loss: Least-volume loss in latent space.
+                - sur_loss: Surrogate MSE between predicted and true targets.
+            """
             x_init_batch = x_init_batch.to(device)
             x_opt_batch  = x_opt_batch.to(device)
             param_batch  = param_batch.to(device)
@@ -417,7 +567,24 @@ def train_one_model(args,
             output_dim=1
         ).to(device)
 
-        def train_step(X_batch, y_batch):
+        def train_step_mlp(X_batch, y_batch):
+            """Performs a single training step for the plain MLP model.
+
+            1) Moves the batch tensors to the specified device.
+            2) Runs a forward pass to get predicted target.
+            3) Calculates MSE loss.
+            4) Adds L2 penalty to the total loss.
+            5) Returns the total loss and placeholder zeros for other metrics (which don't apply here).
+
+            Args:
+                X_batch (torch.Tensor): Input features for the MLP.
+                y_batch (torch.Tensor): True target values.
+
+            Returns:
+                Tuple[torch.Tensor, int, int, int]:
+                - total_loss: MSE loss plus L2 penalty.
+                - 0, 0, 0: Placeholders for reconstruction, least-volume, and surrogate losses (unused here).
+            """
             X_batch = X_batch.to(device)
             y_batch = y_batch.to(device)
             preds = model(X_batch).squeeze(-1)
@@ -447,10 +614,10 @@ def train_one_model(args,
             optimizer_.zero_grad()
             if have_shape_cols and args.structured:
                 (x_init_batch, x_opt_batch, param_batch, cl_batch) = batch_data
-                loss, recon_loss, lv_loss, sur_loss = train_step(x_init_batch, x_opt_batch, param_batch, cl_batch)
+                loss, recon_loss, lv_loss, sur_loss = train_step_vae_mlp(x_init_batch, x_opt_batch, param_batch, cl_batch)
             else:
                 (X_batch, y_batch) = batch_data
-                loss, _, _, _ = train_step(X_batch, y_batch)
+                loss, _, _, _ = train_step_mlp(X_batch, y_batch)
 
             batch_size_ = len(batch_data[0])
             loss.backward()
@@ -468,10 +635,10 @@ def train_one_model(args,
             for batch_data in val_loader:
                 if have_shape_cols and args.structured:
                     (x_init_batch, x_opt_batch, param_batch, cl_batch) = batch_data
-                    loss_val, _, _, _ = train_step(x_init_batch, x_opt_batch, param_batch, cl_batch)
+                    loss_val, _, _, _ = train_step_vae_mlp(x_init_batch, x_opt_batch, param_batch, cl_batch)
                 else:
                     (X_batch, y_batch) = batch_data
-                    loss_val, _, _, _ = train_step(X_batch, y_batch)
+                    loss_val, _, _, _ = train_step_mlp(X_batch, y_batch)
 
                 batch_size_ = len(batch_data[0])
                 running_val_loss += loss_val.item() * batch_size_
@@ -512,7 +679,32 @@ def train_one_model(args,
 ###############################################################################
 # 8) The main function
 ###############################################################################
-def main(args: Args):
+def main(args: Args) -> float:
+    """Orchestrates the entire workflow: data loading, preprocessing, model training,
+    evaluation, optional ensembling, and final saving of the pipeline.
+
+    Steps:
+        1) Initializes Weights & Biases (wandb) run if tracking is enabled.
+        2) Selects and reports the available computation device (CPU, CUDA, MPS, etc.).
+        3) Loads CSV or Parquet data, then applies data preprocessing/flattening.
+        4) Splits data into train/val/test sets, fits scalers on training data, and builds Datasets/Dataloaders.
+        5) Trains one or multiple models depending on the list of seeds.
+        6) Ensembles the models if multiple seeds are provided.
+        7) Saves the final pipeline and optionally plots training curves.
+        8) (Structured mode only) Visualizes shape predictions for a few random samples.
+        9) Optionally evaluates the trained ensemble on the test set to produce final predictions.
+
+    Args:
+        args (Args): Configuration dataclass instance containing file paths, hyperparameters,
+            and other settings.
+
+    Raises:
+        FileNotFoundError: If the specified data file cannot be found.
+        ValueError: If invalid data format is encountered or columns are missing.
+
+    Returns:
+        float: The best validation loss achieved by the ensemble of models.
+    """
     # 1) Possibly do wandb.init
     time_str = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     data_path = os.path.join(args.data_dir, args.data_input)
@@ -577,8 +769,7 @@ def main(args: Args):
 
     # 7) Train/Val/Test split
     #    The user’s code does a test split first, then a val split from the remainder.
-    from sklearn.model_selection import train_test_split
-    split_random_state = 999
+    split_random_state = args.split_random_state
 
     if have_shape_cols and args.structured:
         # shape + param
@@ -639,7 +830,7 @@ def main(args: Args):
         shape_dim = Xinit_train_s.shape[1]  # dimension of shape
         # figure out # cont/cat from the shape of params_train_s
         num_params = params_train_s.shape[1]
-        # you could track how many were cont vs. cat if you want
+        # we could track how many were cont vs. cat if you want
         num_cont = None  # optional
         num_cat  = None  # optional
 
@@ -756,12 +947,7 @@ def main(args: Args):
         scaler_init  = custom_scalers["scaler_init"]
         scaler_opt   = custom_scalers["scaler_opt"]
 
-        def invert_and_pair(scaler, tensor):
-            arr = scaler.inverse_transform(tensor.cpu().numpy().reshape(1, -1)).flatten()
-            n = arr.shape[0] // 2
-            x_coords = arr[:n]
-            y_coords = arr[n:]
-            return np.column_stack((x_coords, y_coords))
+        
 
         # Show a few random test examples
         num_samples = 3
@@ -849,10 +1035,10 @@ def main(args: Args):
             test_preds_ensemble = custom_scalers["scaler_y"].inverse_transform(test_preds_ensemble.reshape(-1, 1)).flatten()
             test_trues = custom_scalers["scaler_y"].inverse_transform(test_trues.reshape(-1, 1)).flatten()
 
-        # If target was log-transformed, exponentiate
+        # If target was log-transformed, exponentiate -> we assume all values are strictly positive
         if args.log_target:
-            test_preds_ensemble = np.exp(test_preds_ensemble) #- 1e-8
-            test_trues = np.exp(test_trues) #- 1e-8
+            test_preds_ensemble = np.exp(test_preds_ensemble)
+            test_trues = np.exp(test_trues)
 
         print("Test samples (avg ensemble):")
         for i in range(min(50, len(test_preds_ensemble))):  # show first 5
@@ -883,5 +1069,9 @@ def main(args: Args):
 # 8) Entry Point
 ###############################################################################
 if __name__ == "__main__":
-    args = tyro.cli(Args)
-    main(args)
+    try:
+        args = tyro.cli(Args)
+        main(args)
+    except Exception as e:
+        print("An error occurred during execution:")
+        raise

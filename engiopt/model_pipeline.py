@@ -1,13 +1,15 @@
 # model_pipeline.py
+import ast
+import math
 import os
 import pickle
-import torch
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
-import math
-from typing import List, Optional, Dict, Any
-import ast
 import pandas as pd
-from sklearn.preprocessing import RobustScaler
+import torch
+
+MIN_UNIQUE_FOR_ONEHOT = 5
 
 ###############################################################################
 # DataPreprocessor
@@ -106,10 +108,22 @@ class DataPreprocessor:
             return {"X": X}, df_processed
 
     def _split_params_with_onehot(self, df: pd.DataFrame, param_cols: List[str]) -> pd.DataFrame:
-        """
-        Splits parameter columns, one-hot encodes those with fewer than 5 unique values.
-        Stores continuous and categorical columns and the dummy mapping.
-        Returns a DataFrame with continuous columns first then dummy columns.
+        """Splits the specified parameter columns into continuous and categorical subsets,
+        then applies one-hot encoding to categorical columns that have fewer than five unique values.
+
+        This method is only called during the fitting phase (`fit_params=True`). It updates internal
+        attributes such as `self.continuous_columns`, `self.categorical_columns`, and
+        `self.categorical_mapping`.
+
+        Args:
+            df (pd.DataFrame): The preprocessed DataFrame containing parameter columns.
+            param_cols (List[str]): The list of columns to be split into continuous or categorical.
+
+        Raises:
+            ValueError: If a specified parameter column does not exist in `df`.
+
+        Returns:
+            pd.DataFrame: A new DataFrame with continuous columns followed by one-hot-encoded columns.
         """
         if not param_cols:
             return pd.DataFrame(index=df.index)
@@ -121,7 +135,7 @@ class DataPreprocessor:
         for col in param_cols:
             if col not in df.columns:
                 raise ValueError(f"[DataPreprocessor] Parameter column '{col}' not found.")
-            if df[col].nunique() < 5:
+            if df[col].nunique() < MIN_UNIQUE_FOR_ONEHOT:
                 dummies = pd.get_dummies(df[col], prefix=col)
                 cat_list.append(dummies)
                 self.categorical_columns.append(col)
@@ -136,11 +150,21 @@ class DataPreprocessor:
         return final_df
 
     def _apply_params_inference(self, df: pd.DataFrame, param_cols: List[str]) -> pd.DataFrame:
-        """
-        Applies the same splitting as during training using the stored mappings.
-        For continuous columns, takes the column as is.
-        For each categorical column, computes dummies and reindexes them to match the training dummy columns.
-        Finally, concatenates continuous and dummy DataFrames in the same order as self.final_param_columns.
+        """Applies the parameter splitting logic in inference mode. Uses previously
+        stored continuous/categorical mappings to reconstruct the same dummy columns
+        as during training.
+
+        For continuous columns, the method copies them directly if they exist, or
+        creates columns of NaNs if missing. For categorical columns, the method
+        re-creates dummies and reindexes them to match the training dummy columns.
+
+        Args:
+            df (pd.DataFrame): The DataFrame containing parameter columns for inference.
+            param_cols (List[str]): The list of columns to be processed.
+
+        Returns:
+            pd.DataFrame: The transformed DataFrame with continuous and dummy columns
+            in the same order as during training.
         """
         if not param_cols:
             return pd.DataFrame(index=df.index)
@@ -176,6 +200,22 @@ class DataPreprocessor:
         return final_df
 
     def _flatten_list_columns(self, df: pd.DataFrame, columns_to_flatten: list) -> pd.DataFrame:
+        """Flattens specified columns in which each entry can be a list or tuple.
+
+        For each flattened column, creates new columns named '{original_col}_{index}'.
+        Ensures all rows in a column have the same length of nested list/tuple.
+
+        Args:
+            df (pd.DataFrame): DataFrame in which columns will be flattened.
+            columns_to_flatten (list): The list of column names to flatten.
+
+        Raises:
+            ValueError: If any column has varying list lengths among rows.
+
+        Returns:
+            pd.DataFrame: A new DataFrame with flattened columns replaced by multiple
+            expanded columns.
+        """
         new_cols_list = []
         drop_cols = []
         for col in columns_to_flatten:
@@ -203,6 +243,15 @@ class DataPreprocessor:
         return df
 
     def _recursive_flatten(self, val):
+        """Recursively flattens nested lists or tuples into a single list.
+
+        Args:
+            val: A scalar, list, or tuple. If scalar, returns [val].
+                If nested list or tuple, flattens to one-dimensional list.
+
+        Returns:
+            list: A fully flattened list of values.
+        """
         if not isinstance(val, (list, tuple)):
             return [val]
         result = []
@@ -249,6 +298,28 @@ class ModelPipeline:
         batch_size: int = 256,
         device: torch.device = torch.device("cpu")
     ) -> np.ndarray:
+        """Predicts the target values from raw input data using the stored ensemble of models.
+
+        Steps:
+            1) Applies the stored DataPreprocessor to transform raw_input into the model's 
+            required format (structured or unstructured).
+            2) Scales parameters and optionally shape arrays, then converts them to torch.Tensors.
+            3) Batches the data to avoid memory issues, runs a forward pass for each model in the ensemble,
+            and averages their predictions.
+            4) If 'scaler_y' is found, inverses the scaling. If log_target is True, exponentiates the output.
+
+        Args:
+            raw_input (pd.DataFrame): The raw features to predict on.
+            batch_size (int, optional): The batch size for inference. Defaults to 256.
+            device (torch.device, optional): The device (CPU/GPU) to perform inference on. Defaults to CPU.
+
+        Raises:
+            ValueError: If no preprocessor is found (meaning the pipeline is incomplete), 
+                        or if required scalers for structured mode are missing.
+
+        Returns:
+            np.ndarray: 1D array of predictions for each row in `raw_input`.
+        """
         self.to_device(device)
         if not self.preprocessor:
             raise ValueError("No DataPreprocessor in pipeline; cannot transform raw data.")
