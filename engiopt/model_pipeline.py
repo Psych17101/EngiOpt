@@ -70,13 +70,36 @@ class DataPreprocessor:
                 print(f"[DataPreprocessor] Applied log-transform to {target_col}")
         return df
 
-    def transform_inputs(self, df: pd.DataFrame, fit_params: bool = False) -> Dict[str, np.ndarray]:
-        """
-        Transforms raw data into arrays.
-          - For structured mode, returns {"x_init": ..., "x_opt": ..., "params": ...}.
-          - For unstructured mode, returns {"X": ...}.
-        When fit_params is True, it performs the splitting and records the final columns.
-        When fit_params is False, it applies the same splitting based on stored mappings.
+    def transform_inputs(
+        self, 
+        df: pd.DataFrame, 
+        fit_params: bool = False
+    ) -> Tuple[Dict[str, np.ndarray], pd.DataFrame]:
+        """Transforms raw data into arrays for model input, returning both the arrays
+        and the processed DataFrame.
+
+        If 'structured' mode is True (VAE with shapes):
+        - Returns ({"x_init": ..., "x_opt": ..., "params": ...}, df_processed).
+
+        If 'structured' mode is False (plain MLP):
+        - Returns ({"X": ...}, df_processed).
+
+        When 'fit_params' is True, the function applies one-hot/dummy logic to
+        parameter columns and updates internal mappings. When False, it uses
+        stored mappings from a previous run.
+
+        Args:
+            df (pd.DataFrame): The raw DataFrame to be transformed.
+            fit_params (bool, optional): If True, fits new parameter mappings
+                (e.g., one-hot columns). If False, uses stored mappings.
+
+        Returns:
+            Tuple[Dict[str, np.ndarray], pd.DataFrame]:
+            - A dictionary of NumPy arrays containing model inputs.
+            * In structured mode: {"x_init", "x_opt", "params"}.
+            * In unstructured mode: {"X"}.
+            - The processed DataFrame (df_processed), which includes flattening,
+            filtering, one-hot columns, and any log/nondimensional transformations.
         """
         df_processed = self.preprocess_dataframe(df.copy())
         structured = self.args.get("structured", False)
@@ -97,7 +120,7 @@ class DataPreprocessor:
             else:
                 param_df = self._apply_params_inference(df_processed, param_cols)
             params = param_df.values if len(param_df.columns) > 0 else np.empty((len(df_processed), 0))
-            return {"x_init": x_init, "x_opt": x_opt, "params": params}
+            return {"x_init": x_init, "x_opt": x_opt, "params": params}, df_processed
         else:
             # Unstructured mode
             if fit_params:
@@ -289,6 +312,12 @@ class ModelPipeline:
             m.eval()
 
     def to_device(self, device: torch.device = torch.device("cpu")):
+        """Moves all models in the pipeline to the specified device (CPU or GPU).
+
+        Args:
+            device (torch.device, optional): The device to move the models onto.
+                Defaults to CPU (torch.device("cpu")).
+        """
         for i, m in enumerate(self.models):
             self.models[i] = m.to(device)
 
@@ -386,6 +415,27 @@ class ModelPipeline:
         device: torch.device = torch.device("cpu"),
         metrics: List[str] = ["mse", "rmse", "rel_err"]
     ) -> Dict[str, float]:
+        """Evaluates the pipeline's predictions against ground-truth values using one or more metrics.
+
+        Steps:
+            1) Calls self.predict(...) to get predictions for the provided raw_input.
+            2) Computes the error between predictions and the given y_true.
+            3) Aggregates and returns the specified metrics in a dictionary.
+
+        Args:
+            raw_input (pd.DataFrame): The raw features for which to evaluate predictions.
+            y_true (np.ndarray): The ground-truth target values, same length as raw_input.
+            batch_size (int, optional): Batch size for prediction. Defaults to 256.
+            device (torch.device, optional): The device for inference. Defaults to CPU.
+            metrics (List[str], optional): The metrics to compute. 
+                Supported options include "mse", "rmse", "mae", and "rel_err". Defaults to ["mse", "rmse", "rel_err"].
+
+        Raises:
+            ValueError: If an unknown metric is requested.
+
+        Returns:
+            Dict[str, float]: A dictionary of metric names mapped to their computed values (floats).
+        """
         y_pred = self.predict(raw_input, batch_size=batch_size, device=device)
         diff = y_pred - y_true
         epsilon = 1e-12
@@ -404,6 +454,20 @@ class ModelPipeline:
         return results
 
     def save(self, filepath: str, device: torch.device = torch.device("cpu")):
+        """Saves the entire pipeline (models, scalers, preprocessor, etc.) to a file.
+
+        1) Moves models to the specified device to ensure they are in a consistent state.
+        2) Serializes the pipeline object using pickle.
+        3) Writes the pickle file to the specified filepath.
+
+        Args:
+            filepath (str): The path where the pipeline should be saved (e.g., "pipeline.pkl").
+            device (torch.device, optional): The device to move models onto before saving.
+                Defaults to CPU.
+
+        Raises:
+            OSError: If there is any issue writing to the file.
+        """
         self.to_device(device)
         with open(filepath, "wb") as f:
             pickle.dump(self, f)
@@ -411,6 +475,22 @@ class ModelPipeline:
 
     @classmethod
     def load(cls, filepath: str) -> "ModelPipeline":
+        """Loads a serialized pipeline from a file.
+
+        The pipeline includes:
+        - One or more trained PyTorch models,
+        - Any fitted scalers for features and/or targets,
+        - A DataPreprocessor instance with its stored mappings.
+
+        Args:
+            filepath (str): The path to the pickle file containing the serialized pipeline.
+
+        Raises:
+            FileNotFoundError: If the specified filepath does not exist.
+
+        Returns:
+            ModelPipeline: An instance of ModelPipeline with models, scalers, and preprocessor.
+        """
         if not os.path.isfile(filepath):
             raise FileNotFoundError(f"No such file: {filepath}")
         with open(filepath, "rb") as f:
