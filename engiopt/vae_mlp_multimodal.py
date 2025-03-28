@@ -5,10 +5,10 @@
 Shape-to-Shape VAE + Surrogate Example (Optionally skipping shapes entirely)
 
 Added ensembling:
-1) The 'seed' argument can be a list of integers. 
-2) Each seed trains a separate model with the same hyperparameters (but different random inits).
-3) In evaluation, the predictions of all models are averaged to get the final result. 
-4) Everything else remains the same.
+ 1) The 'seed' argument can be a list of integers.
+ 2) Each seed trains a separate model with the same hyperparameters (but different random inits).
+ 3) In evaluation, the predictions of all models are averaged to get the final result.
+ 4) Everything else remains the same.
 """
 
 import os
@@ -18,7 +18,7 @@ import random
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional, Union
+from typing import List, Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -27,178 +27,101 @@ import tyro
 import wandb
 from matplotlib import pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.preprocessing import RobustScaler
 
 import torch.nn.functional as F
+# Import our pipeline code
 from model_pipeline import ModelPipeline, DataPreprocessor
-
 
 ###############################################################################
 # 1) Argument Parsing
 ###############################################################################
-
 @dataclass
 class Args:
     data_dir: str = "./data"
     data_input: str = "airfoil_data.csv"
 
-    # Set these to "" if you have NO shape columns at all
+    # If your data has shape columns, set these. If no shape, leave them empty.
     init_col: str = "initial_design"
     opt_col: str = "optimal_design"
 
     target_col: str = "cl_val"
+    log_target: bool = False
 
-    log_target: bool = False  # If True, we'll log-transform the target before training
-
-    # If you want to flatten param columns, add them here
+    # Param columns (some might be continuous, some might have <5 unique => one-hot).
     params_cols: List[str] = field(default_factory=lambda: ["mach", "reynolds"])
+
+    # Columns to flatten if they’re lists
     flatten_columns: List[str] = field(default_factory=lambda: ["initial_design", "optimal_design"])
     strip_column_spaces: bool = False
-    subset_condition: Optional[str] = None  # e.g., "r > 0"
+    subset_condition: Optional[str] = None  # e.g. "r > 0"
 
-    nondim_map: Optional[str] = None  # e.g., '{"C2": "C1", ...}'
+    nondim_map: Optional[str] = None  # e.g. '{"colA":"refColA","colB":"refColB"}'
 
-    structured: bool = True  # Controls VAE+surrogate vs. plain MLP
+    # VAE + surrogate vs. plain MLP
+    structured: bool = True
     hidden_layers: int = 2
     hidden_size: int = 64
     latent_dim: int = 32
     activation: Literal[
-        "relu", "leakyrelu", "prelu", "rrelu", "tanh",
-        "sigmoid", "elu", "selu", "gelu", "celu", "none"
+        "relu","leakyrelu","prelu","rrelu","tanh",
+        "sigmoid","elu","selu","gelu","celu","none"
     ] = "relu"
     optimizer: Literal[
-        "sgd", "adam", "adamw", "rmsprop",
-        "adagrad", "adadelta", "adamax", "asgd", "lbfgs"
+        "sgd","adam","adamw","rmsprop","adagrad",
+        "adadelta","adamax","asgd","lbfgs"
     ] = "adam"
     learning_rate: float = 1e-3
-    # Learning rate scheduler parameters
-    lr_decay: float = 1.0       # gamma for ExponentialLR; 1.0 means no decay.
-    lr_decay_step: int = 1      # how often (in epochs) to step the scheduler
+
+    # LR scheduler
+    lr_decay: float = 1.0
+    lr_decay_step: int = 1
 
     n_epochs: int = 50
     batch_size: int = 32
     patience: int = 10
-    l2_lambda: float = 1e-3  # Set a default; can be tuned via command line
+    l2_lambda: float = 1e-3
 
     gamma: float = 1.0
     lambda_lv: float = 1e-2
+
     test_size: float = 0.2
     val_size_of_train: float = 0.25
     scale_target: bool = True
+
     track: bool = True
-    wandb_project: str = "shape2shape_vae"
+    wandb_project: str = "vae_mlp_multimodal"
     wandb_entity: Optional[str] = None
 
-    # Now allow multiple seeds for ensembling
     seed: List[int] = field(default_factory=lambda: [42])
-
     save_model: bool = False
     plot_loss: bool = True
     model_output_dir: str = "results"
     test_model: bool = False
 
     def __post_init__(self):
-        # If user passed a single int, make it a list; if they passed a list, keep it.
+        # If user passed a single int for seed, convert to list
         if isinstance(self.seed, int):
             self.seed = [self.seed]
 
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.model_output_dir, exist_ok=True)
+
+        # For "params_cols" and "flatten_columns", parse them if they were passed as strings
         for field_name in ["flatten_columns", "params_cols"]:
             value = getattr(self, field_name)
             if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
                 try:
                     parsed_value = ast.literal_eval(value[0])
-                    if isinstance(parsed_value, list) and all(isinstance(x, str) for x in parsed_value):
+                    if isinstance(parsed_value, list) and all(isinstance(x,str) for x in parsed_value):
                         setattr(self, field_name, parsed_value)
                 except Exception:
-                    raise ValueError(
-                        f"Invalid format for --{field_name}: {value}. Expected a list like ['col1','col2']"
-                    )
+                    raise ValueError(f"Invalid format for --{field_name}: {value}")
 
 ###############################################################################
-# 2) Utilities
+# 2) Utilities (unchanged placeholders if you want them)
 ###############################################################################
-
-def recursive_flatten(val):
-    if not isinstance(val, (list, tuple)):
-        return [val]
-    result = []
-    for item in val:
-        result.extend(recursive_flatten(item))
-    return result
-
-def flatten_list_columns(df: pd.DataFrame, columns_to_flatten: List[str]) -> pd.DataFrame:
-    """Recursively flattens any columns in `columns_to_flatten`."""
-    new_cols_list = []
-    drop_cols = []
-    for col in columns_to_flatten:
-        if col not in df.columns:
-            print(f"Warning: Column '{col}' not in DataFrame, skipping flatten.")
-            continue
-        first_val = df[col].iloc[0]
-        if isinstance(first_val, str):
-            try:
-                _ = ast.literal_eval(first_val)
-                df[col] = df[col].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
-            except:
-                print(f"Warning: Column '{col}' cannot be parsed as a list. Skipping.")
-                continue
-        if isinstance(df[col].iloc[0], (list, tuple)):
-            flattened_rows = [recursive_flatten(x) for x in df[col]]
-            lengths = [len(row) for row in flattened_rows]
-            if len(set(lengths)) > 1:
-                raise ValueError(f"Cannot flatten: Column '{col}' has varying lengths among rows.")
-            n = lengths[0]
-            new_col_names = [f"{col}_{i}" for i in range(n)]
-            expanded_df = pd.DataFrame(flattened_rows, columns=new_col_names)
-            new_cols_list.append(expanded_df)
-            drop_cols.append(col)
-    if new_cols_list:
-        df = pd.concat([df.drop(columns=drop_cols).reset_index(drop=True)] + new_cols_list, axis=1)
-    return df
-
-def strip_column_spaces(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove leading and trailing whitespace from all column names."""
-    df.columns = [col.strip() for col in df.columns]
-    return df
-
-def nondimensionalize(df: pd.DataFrame, nondim_map: dict) -> pd.DataFrame:
-    """
-    Divides each column specified in nondim_map by its reference column.
-    For example, if nondim_map = {"C2": "C1"}, then df["C2"] = df["C2"] / df["C1"].
-    """
-    df_nd = df.copy()
-    for col, ref in nondim_map.items():
-        if col not in df_nd.columns:
-            raise ValueError(f"Column {col} not found in DataFrame for nondimensionalization.")
-        if ref not in df_nd.columns:
-            raise ValueError(f"Reference column {ref} not found in DataFrame for nondimensionalization.")
-        df_nd[col] = df_nd[col] / df_nd[ref]
-    return df_nd
-
-def process_params_split(df: pd.DataFrame, param_cols: List[str]) -> (pd.DataFrame, pd.DataFrame):
-    """
-    Splits parameter columns into continuous and categorical parts.
-    If a column has fewer than 5 unique values, one-hot encode it;
-    otherwise, leave it as is.
-    Returns a tuple (cont_df, cat_df). If no column qualifies for a part, returns an empty DataFrame.
-    """
-    cont_list = []
-    cat_list = []
-    for col in param_cols:
-        if col not in df.columns:
-            raise ValueError(f"Parameter column {col} not found in DataFrame.")
-        if df[col].nunique() < 5:
-            # One-hot encode categorical column
-            dummies = pd.get_dummies(df[col], prefix=col)
-            cat_list.append(dummies)
-        else:
-            cont_list.append(df[[col]])
-    cont_df = pd.concat(cont_list, axis=1) if cont_list else pd.DataFrame(index=df.index)
-    cat_df = pd.concat(cat_list, axis=1) if cat_list else pd.DataFrame(index=df.index)
-    return cont_df, cat_df
-
+# e.g. flatten_list_columns, etc., if you want them. But we rely on DataPreprocessor now.
 def compute_l2_penalty(model: nn.Module) -> torch.Tensor:
     l2_norm = 0.0
     for param in model.parameters():
@@ -208,28 +131,20 @@ def compute_l2_penalty(model: nn.Module) -> torch.Tensor:
 ###############################################################################
 # 3) Datasets
 ###############################################################################
-
 class Shape2ShapeWithParamsDataset(torch.utils.data.Dataset):
-    """
-    (x_init, x_opt, params, target)
-    In structured mode, the params are the concatenation of continuous and categorical values.
-    """
     def __init__(self, init_array, opt_array, params_array, cl_array):
         self.X_init = torch.from_numpy(init_array).float()
         self.X_opt  = torch.from_numpy(opt_array).float()
         self.params = torch.from_numpy(params_array).float()
         self.y      = torch.from_numpy(cl_array).float()
         if self.X_init.shape[1] != self.X_opt.shape[1]:
-            raise ValueError("initial_design and optimal_design must have the same dimension.")
+            raise ValueError("init_design and opt_design must have same dimension.")
     def __len__(self):
         return len(self.X_init)
     def __getitem__(self, idx):
         return self.X_init[idx], self.X_opt[idx], self.params[idx], self.y[idx]
 
 class PlainTabularDataset(torch.utils.data.Dataset):
-    """
-    (X, y) only
-    """
     def __init__(self, X, y):
         self.X = torch.from_numpy(X).float()
         self.y = torch.from_numpy(y).float()
@@ -237,7 +152,7 @@ class PlainTabularDataset(torch.utils.data.Dataset):
         return len(self.X)
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
-
+    
 ###############################################################################
 # 4) Model Definitions
 ###############################################################################
@@ -594,28 +509,20 @@ def train_one_model(args,
 
     return model, (train_losses, val_losses), best_val_loss
 
-
-def main(args: Args) -> None:
-    # We'll use a fixed random_state for data splitting so that all seeds
-    # use the same split but vary only in model initialization.
-    # Change this if you want each seed to have different splits.
-    split_random_state = 999
-
-    # Just for run naming
+###############################################################################
+# 8) The main function
+###############################################################################
+def main(args: Args):
+    # 1) Possibly do wandb.init
     time_str = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     data_path = os.path.join(args.data_dir, args.data_input)
     run_name = f"{args.data_input}__{time_str}"
 
     if args.track:
-        wandb.init(
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            config=vars(args),
-            save_code=True,
-            name=run_name
-        )
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=vars(args),
+                   save_code=True, name=run_name)
 
-    # Choose device
+    # 2) Choose device
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.cuda.is_available():
@@ -624,297 +531,216 @@ def main(args: Args) -> None:
         device = torch.device("cpu")
     print(f"Using device: {device}")
 
+    # 3) Read the raw CSV/Parquet
     if not os.path.isfile(data_path):
-        raise FileNotFoundError(f"The specified data file does not exist: {data_path}")
-
+        raise FileNotFoundError(f"{data_path} does not exist")
     ext = os.path.splitext(data_path)[1].lower()
     if ext == ".csv":
         df = pd.read_csv(data_path)
-        print(df.head())
     elif ext == ".parquet":
         df = pd.read_parquet(data_path)
-        print(df.head())
     else:
-        raise ValueError("data_input must be a CSV or Parquet file.")
-    """
-    if args.strip_column_spaces:
-        df = strip_column_spaces(df)
+        raise ValueError("data_input must be CSV or Parquet")
 
-    if args.subset_condition is not None:
-        try:
-            df = df.query(args.subset_condition)
-            print(f"Applied subset condition: {args.subset_condition}")
-        except Exception as e:
-            raise ValueError(f"Error applying subset condition '{args.subset_condition}': {e}")
-    
-    if args.nondim_map is not None:
-        try:
-            nondim_dict = ast.literal_eval(args.nondim_map)
-            if not isinstance(nondim_dict, dict):
-                raise ValueError("nondim_map must be a dictionary, e.g., '{\"C2\": \"C1\"}'")
-        except Exception as e:
-            raise ValueError(f"Invalid nondim_map: {args.nondim_map}. Error: {e}")
-        df = nondimensionalize(df, nondim_dict)
-        print("Applied nondimensionalization using map:", nondim_dict)
+    print(df.head())
 
-    if args.log_target:
-        df[args.target_col] = np.log(df[args.target_col])
-        print(f"Applied log-transform to column '{args.target_col}'")
+    # 4) Create DataPreprocessor, transform the entire dataset in training mode
+    preprocessor = DataPreprocessor(vars(args))
+    processed_dict, df = preprocessor.transform_inputs(df, fit_params=True)
 
-    if args.flatten_columns:
-        df = flatten_list_columns(df, args.flatten_columns)
-        print("After flattening, df.columns:", df.columns.tolist())
-    """
-    # Create a temporary DataPreprocessor (no scalers needed yet, or pass None):
-    preprocessor = DataPreprocessor(vars(args), scalers=None)
-    # Now do the raw-data preprocessing:
-    df = preprocessor.preprocess_dataframe(df)
-
+    # 5) Check if shape columns exist
     have_shape_cols = (
         args.init_col != "" and args.opt_col != "" and
-        any(col.startswith(args.init_col + "_") for col in df.columns) and
-        any(col.startswith(args.opt_col + "_") for col in df.columns)
+        any(c.startswith(args.init_col + "_") for c in df.columns) and
+        any(c.startswith(args.opt_col + "_") for c in df.columns)
     )
-
     if args.structured and not have_shape_cols:
-        raise ValueError("Structured mode selected but no shape columns found! "
-                         "Set --init_col= and --opt_col= to empty or use unstructured instead.")
+        raise ValueError("Structured mode but no shape columns found. Check your init_col/opt_col settings.")
 
     if args.target_col not in df.columns:
-        raise ValueError(f"Missing target column: {args.target_col}")
+        raise ValueError(f"Missing target_col in DataFrame: {args.target_col}")
     y_all = df[args.target_col].values
 
-    ################################################################
-    # Prepare data splits once (for all seeds)
-    ################################################################
+    # 6) Build entire arrays for shape & params (structured) or X (unstructured)
     if have_shape_cols and args.structured:
-        # Gather shape columns
-        X_init_all = df[[c for c in df.columns if c.startswith(args.init_col + "_")]].values
-        X_opt_all  = df[[c for c in df.columns if c.startswith(args.opt_col + "_")]].values
+        X_init_all = processed_dict["x_init"]
+        X_opt_all  = processed_dict["x_opt"]
+        params_all = processed_dict["params"]
 
-        # Split parameters into cont/cat
-        cont_df, cat_df = process_params_split(df, args.params_cols)
-        print("Continuous param columns:", cont_df.columns.tolist())
-        print("Categorical param columns:", cat_df.columns.tolist())
+        # We'll determine cont/cat dimension from param_all's shape:
+        # but to find how many columns were one-hot, you'd look at param_df shape, etc.
+        # For clarity, let's just set these later once we know the shape.
 
-        if not cont_df.empty:
-            scaler_cont = RobustScaler()
-            cont_values = scaler_cont.fit_transform(cont_df.values)
-        else:
-            cont_values = np.empty((len(df), 0))
+    else:
+        # unstructured MLP
+        X_features_all = processed_dict["X"]
 
-        cat_values = cat_df.values if not cat_df.empty else np.empty((len(df), 0))
-        params_all = np.hstack([cont_values, cat_values])
-        num_cont = cont_values.shape[1]
-        num_cat  = cat_values.shape[1]
+    # 7) Train/Val/Test split
+    #    The user’s code does a test split first, then a val split from the remainder.
+    from sklearn.model_selection import train_test_split
+    split_random_state = 999
 
-        # Single data split
+    if have_shape_cols and args.structured:
+        # shape + param
         Xinit_temp, Xinit_test, Xopt_temp, Xopt_test, params_temp, params_test, y_temp, y_test = \
-            train_test_split(
-                X_init_all, X_opt_all, params_all, y_all,
-                test_size=args.test_size, random_state=split_random_state
-            )
+            train_test_split(X_init_all, X_opt_all, params_all, y_all,
+                             test_size=args.test_size, random_state=split_random_state)
         Xinit_train, Xinit_val, Xopt_train, Xopt_val, params_train, params_val, y_train, y_val = \
-            train_test_split(
-                Xinit_temp, Xopt_temp, params_temp, y_temp,
-                test_size=args.val_size_of_train, random_state=split_random_state
-            )
+            train_test_split(Xinit_temp, Xopt_temp, params_temp, y_temp,
+                             test_size=args.val_size_of_train, random_state=split_random_state)
+    else:
+        # unstructured
+        X_temp, X_test, y_temp, y_test = train_test_split(X_features_all, y_all,
+                                                          test_size=args.test_size,
+                                                          random_state=split_random_state)
+        X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp,
+                                                          test_size=args.val_size_of_train,
+                                                          random_state=split_random_state)
 
+    # 8) Fit scalers on training, transform train/val/test
+    #    We'll store them in a dict (custom_scalers) to pass to the pipeline.
+
+    custom_scalers = {}
+    if have_shape_cols and args.structured:
+        # shape-based approach
+        # 8a) robust-scaler for x_init, x_opt, param
         scaler_init = RobustScaler()
         scaler_opt  = RobustScaler()
         scaler_params = RobustScaler()
 
-        Xinit_train_scaled = scaler_init.fit_transform(Xinit_train)
-        Xinit_val_scaled   = scaler_init.transform(Xinit_val)
-        Xinit_test_scaled  = scaler_init.transform(Xinit_test)
+        Xinit_train_s = scaler_init.fit_transform(Xinit_train)
+        Xinit_val_s   = scaler_init.transform(Xinit_val)
+        Xinit_test_s  = scaler_init.transform(Xinit_test)
 
-        Xopt_train_scaled  = scaler_opt.fit_transform(Xopt_train)
-        Xopt_val_scaled    = scaler_opt.transform(Xopt_val)
-        Xopt_test_scaled   = scaler_opt.transform(Xopt_test)
+        Xopt_train_s  = scaler_opt.fit_transform(Xopt_train)
+        Xopt_val_s    = scaler_opt.transform(Xopt_val)
+        Xopt_test_s   = scaler_opt.transform(Xopt_test)
 
-        params_train_scaled = scaler_params.fit_transform(params_train)
-        params_val_scaled   = scaler_params.transform(params_val)
-        params_test_scaled  = scaler_params.transform(params_test)
+        params_train_s = scaler_params.fit_transform(params_train)
+        params_val_s   = scaler_params.transform(params_val)
+        params_test_s  = scaler_params.transform(params_test)
 
+        # If we also scale the target:
         if args.scale_target:
             scaler_y = RobustScaler()
-            y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
-            y_val_scaled   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
-            y_test_scaled  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
-        else:
-            y_train_scaled, y_val_scaled, y_test_scaled = y_train, y_val, y_test
-
-        train_dataset = Shape2ShapeWithParamsDataset(
-            Xinit_train_scaled, Xopt_train_scaled, params_train_scaled, y_train_scaled
-        )
-        val_dataset   = Shape2ShapeWithParamsDataset(
-            Xinit_val_scaled, Xopt_val_scaled, params_val_scaled, y_val_scaled
-        )
-        test_dataset  = Shape2ShapeWithParamsDataset(
-            Xinit_test_scaled, Xopt_test_scaled, params_test_scaled, y_test_scaled
-        )
-
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        val_loader   = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-        test_loader  = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-
-        shape_dim = Xinit_train_scaled.shape[1]
-
-        # We'll need these scalers for shape overlay or final test
-        custom_scalers = {
-            "scaler_init": scaler_init,
-            "scaler_opt": scaler_opt,
-            "scaler_params": scaler_params,
-            "scaler_cont": scaler_cont  # saved if needed
-        }
-        if args.scale_target:
+            y_train_s = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
+            y_val_s   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
+            y_test_s  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
             custom_scalers["scaler_y"] = scaler_y
+        else:
+            y_train_s, y_val_s, y_test_s = y_train, y_val, y_test
+
+        # Build datasets
+        from torch.utils.data import DataLoader
+        train_dataset = Shape2ShapeWithParamsDataset(Xinit_train_s, Xopt_train_s, params_train_s, y_train_s)
+        val_dataset   = Shape2ShapeWithParamsDataset(Xinit_val_s,   Xopt_val_s,   params_val_s,   y_val_s)
+        test_dataset  = Shape2ShapeWithParamsDataset(Xinit_test_s,  Xopt_test_s,  params_test_s,  y_test_s)
+
+        shape_dim = Xinit_train_s.shape[1]  # dimension of shape
+        # figure out # cont/cat from the shape of params_train_s
+        num_params = params_train_s.shape[1]
+        # you could track how many were cont vs. cat if you want
+        num_cont = None  # optional
+        num_cat  = None  # optional
+
+        # store them
+        custom_scalers["scaler_init"]   = scaler_init
+        custom_scalers["scaler_opt"]    = scaler_opt
+        custom_scalers["scaler_params"] = scaler_params
 
     else:
-        # Unstructured MLP
-        cont_df, cat_df = process_params_split(df, args.params_cols)
-        print("Continuous param columns:", cont_df.columns.tolist())
-        print("Categorical param columns:", cat_df.columns.tolist())
-
-        if not cont_df.empty:
-            scaler_cont = RobustScaler()
-            cont_values = scaler_cont.fit_transform(cont_df.values)
-        else:
-            cont_values = np.empty((len(df), 0))
-
-        cat_values = cat_df.values if not cat_df.empty else np.empty((len(df), 0))
-        X_features_all = np.hstack([cont_values, cat_values])
-
-        X_temp, X_test, y_temp, y_test = train_test_split(
-            X_features_all, y_all, test_size=args.test_size, random_state=split_random_state
-        )
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_temp, y_temp, test_size=args.val_size_of_train, random_state=split_random_state
-        )
-
+        # unstructured MLP
         scaler_X = RobustScaler()
-        X_train_scaled = scaler_X.fit_transform(X_train)
-        X_val_scaled   = scaler_X.transform(X_val)
-        X_test_scaled  = scaler_X.transform(X_test)
+        X_train_s = scaler_X.fit_transform(X_train)
+        X_val_s   = scaler_X.transform(X_val)
+        X_test_s  = scaler_X.transform(X_test)
 
         if args.scale_target:
             scaler_y = RobustScaler()
-            y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
-            y_val_scaled   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
-            y_test_scaled  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
-        else:
-            y_train_scaled, y_val_scaled, y_test_scaled = y_train, y_val, y_test
-
-        train_dataset = PlainTabularDataset(X_train_scaled, y_train_scaled)
-        val_dataset   = PlainTabularDataset(X_val_scaled, y_val_scaled)
-        test_dataset  = PlainTabularDataset(X_test_scaled, y_test_scaled)
-
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        val_loader   = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-        test_loader  = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-
-        custom_scalers = {}
-        if not cont_df.empty:
-            custom_scalers["scaler_cont"] = scaler_cont
-        custom_scalers["scaler_X"] = scaler_X
-        if args.scale_target:
+            y_train_s = scaler_y.fit_transform(y_train.reshape(-1,1)).flatten()
+            y_val_s   = scaler_y.transform(y_val.reshape(-1,1)).flatten()
+            y_test_s  = scaler_y.transform(y_test.reshape(-1,1)).flatten()
             custom_scalers["scaler_y"] = scaler_y
+        else:
+            y_train_s, y_val_s, y_test_s = y_train, y_val, y_test
 
-        shape_dim = None   # Not used for MLP
-        num_cont  = None
-        num_cat   = None
+        from torch.utils.data import DataLoader
+        train_dataset = PlainTabularDataset(X_train_s, y_train_s)
+        val_dataset   = PlainTabularDataset(X_val_s,   y_val_s)
+        test_dataset  = PlainTabularDataset(X_test_s,  y_test_s)
+
+        shape_dim = None
+        num_params = X_train_s.shape[1]
+        num_cont = None
+        num_cat  = None
+
+        custom_scalers["scaler_X"] = scaler_X
+
+    # Build data loaders
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader   = DataLoader(val_dataset,   batch_size=args.batch_size, shuffle=False)
+    test_loader  = DataLoader(test_dataset,  batch_size=args.batch_size, shuffle=False)
 
     ################################################################
-    # Train (one model per seed, if multiple seeds => ensemble)
+    # 9) Train ensemble (if multiple seeds)
     ################################################################
+    from torch.backends import cudnn
     ensemble_models = []
     ensemble_val_losses = []
 
     for seed_i in args.seed:
-        print("\n=====================================================")
-        print(f"Training model for seed={seed_i}")
-        print("=====================================================")
-
-        # Make things reproducible for each seed_i
+        print(f"=== Training model for seed={seed_i} ===")
         torch.manual_seed(seed_i)
         np.random.seed(seed_i)
         random.seed(seed_i)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        cudnn.deterministic = True
+        cudnn.benchmark = False
 
+        # Call your "train_one_model" function
         model_i, (train_losses_i, val_losses_i), best_val_loss_i = train_one_model(
-            args, train_loader, val_loader, have_shape_cols,
-            shape_dim, num_cont if num_cont else 0, num_cat if num_cat else 0,
+            args, train_loader, val_loader,
+            have_shape_cols, shape_dim,
+            num_cont if num_cont else 0, num_cat if num_cat else 0,
             device
         )
         ensemble_models.append(model_i)
         ensemble_val_losses.append(best_val_loss_i)
 
-    # If we only have 1 seed, final model is ensemble_models[0].
-    # If multiple seeds, we average predictions.
-    # We'll pick the final "best" model as the one with the lowest val loss
-    # in case we still want shape overlays below.
     best_model_idx = int(np.argmin(ensemble_val_losses))
-    best_model = ensemble_models[best_model_idx]
-    print(f"Best model among seeds is index={best_model_idx} (seed={args.seed[best_model_idx]}) "
-          f"with val_loss={ensemble_val_losses[best_model_idx]:.4f}")
+    print(f"Best model index={best_model_idx}, seed={args.seed[best_model_idx]}, val_loss={ensemble_val_losses[best_model_idx]:.4f}")
 
     ################################################################
-    # Optional: Save the best model’s weights
+    # 10) Build final pipeline and save
     ################################################################
-    # After training and data splitting, you have custom_scalers and ensemble_models.
     pipeline_metadata = {"args": vars(args)}
-    # Instantiate the preprocessor with training args (as a dict) and scalers
-    #preprocessor = DataPreprocessor(vars(args), custom_scalers)
-
+    # Attach the same data preprocessor we used (with final_param_columns set)
     pipeline = ModelPipeline(
-        models=ensemble_models,  # your trained (and chosen) model(s)
-        scalers=custom_scalers,  # the final fitted scalers
+        models=ensemble_models,
+        scalers=custom_scalers,
         structured=args.structured,
         log_target=args.log_target,
         metadata=pipeline_metadata,
-        preprocessor=preprocessor,
+        preprocessor=preprocessor
     )
 
-    #pipeline.to_device(device)
+    pipeline_filename = os.path.join(args.model_output_dir,
+                                     f"final_pipeline_{run_name}_tgt_{args.target_col}.pkl")
+    pipeline.save(pipeline_filename, device=device)
+    print(f"Saved pipeline to {pipeline_filename}")
 
-    pipeline_path = os.path.join(args.model_output_dir, f"final_pipeline_{run_name}.pkl")
-    pipeline.save(pipeline_path, device)
-    print(f"Saved pipeline to {pipeline_path}")
-
-
-
-    """
-    if args.save_model:
-        for i, seed_i in enumerate(args.seed):
-            model_path = os.path.join(args.model_output_dir, f"ensemble_model_seed_{seed_i}_{run_name}_{args.target_col}.pth")
-            save_dict = {
-                "model_state_dict": ensemble_models[i].state_dict(),
-                "seed": seed_i,
-                "val_loss": ensemble_val_losses[i],
-            }
-            save_dict.update(custom_scalers)
-            torch.save(save_dict, model_path)
-            print(f"Saved ensemble model for seed {seed_i} to: {model_path}")"
-    """
-
-
-    ################################################################
-    # Plot train/val loss curves only for the best model’s logs
-    ################################################################
+    # Optionally plot training curves for the best seed if there's only 1 seed
     if args.plot_loss and len(args.seed) == 1:
-        # For a single-seed run, plot the train and validation loss curves
-        plt.figure(figsize=(8, 6))
+        plt.figure()
         plt.plot(train_losses_i, label="Train Loss")
-        plt.plot(val_losses_i, label="Validation Loss")
+        plt.plot(val_losses_i, label="Val Loss")
+        plt.legend()
         plt.xlabel("Epoch")
         plt.ylabel("Loss")
-        plt.title("Training and Validation Loss Curves")
-        plt.legend()
-        loss_plot_path = os.path.join(args.model_output_dir, f"loss_{run_name}.png")
-        plt.savefig(loss_plot_path)
+        plt.title("Loss Curves")
+        plot_name = os.path.join(args.model_output_dir, f"loss_{run_name}.png")
+        plt.savefig(plot_name)
         plt.show()
-        print(f"Loss curves saved to: {loss_plot_path}")
+        print(f"Saved loss curve to {plot_name}")
 
 
     ################################################################
@@ -923,6 +749,7 @@ def main(args: Args) -> None:
     # If multiple seeds, we’ll just show overlays from the best model (for illustration).
     if have_shape_cols and args.structured:
         # We’ll re-use the best_model for shape overlay
+        best_model = ensemble_models[best_model_idx]
         best_model.eval()
 
         # Grab the scalers

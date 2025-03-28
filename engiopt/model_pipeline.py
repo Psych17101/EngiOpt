@@ -13,14 +13,13 @@ from sklearn.preprocessing import RobustScaler
 # DataPreprocessor
 ###############################################################################
 class DataPreprocessor:
-    """
-    Handles raw data transformations:
+    """Handles raw data transformations:
       - Strips spaces and flattens list columns.
-      - Applies optional subset filtering, nondimensionalization, and log–transformation.
+      - Applies optional subset filtering, nondimensionalization, and log-transformation.
       - Splits parameter columns into continuous and categorical parts. For columns with
-        fewer than 5 unique values, one–hot encoding is applied.
+        fewer than 5 unique values, one-hot encoding is applied.
       - Stores the final parameter column names and, for categorical columns, the list of dummy columns.
-      
+
     Usage in training:
       preprocessor = DataPreprocessor(vars(args))
       processed_dict = preprocessor.transform_inputs(df, fit_params=True)
@@ -29,7 +28,7 @@ class DataPreprocessor:
            Else: { "X": ... }
       and it stores self.final_param_columns, self.continuous_columns,
       self.categorical_columns, and self.categorical_mapping.
-      
+
     Usage in inference:
       (After loading the pipeline, the pipeline calls preprocessor.transform_inputs(raw_df, fit_params=False)
       so that the same dummy columns are created.)
@@ -314,7 +313,7 @@ class ModelPipeline:
         y_true: np.ndarray,
         batch_size: int = 256,
         device: torch.device = torch.device("cpu"),
-        metrics: List[str] = ("mse", "rmse", "rel_err")
+        metrics: List[str] = ["mse", "rmse", "rel_err"]
     ) -> Dict[str, float]:
         y_pred = self.predict(raw_input, batch_size=batch_size, device=device)
         diff = y_pred - y_true
