@@ -15,10 +15,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
-import torchvision.transforms as transforms
 import tqdm
 import tyro
-
 import wandb
 
 
@@ -67,7 +65,7 @@ class Generator(nn.Module):
         super().__init__()
         self.design_shape = design_shape  # Store design shape
 
-        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:
+        def block(in_feat: int, out_feat: int, *, normalize: bool = True) -> list:
             layers = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
@@ -83,7 +81,8 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z):
+    def forward(self, z: th.Tensor) -> th.Tensor:
+        """Forward pass to generate an image from latent space."""
         img = self.model(z)
         img = img.view(img.size(0), *self.design_shape)
         return img
@@ -91,7 +90,7 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
     def __init__(self):
-        super(Discriminator, self).__init__()
+        super().__init__()
 
         self.model = nn.Sequential(
             nn.Linear(int(np.prod(design_shape)), 512),
@@ -102,7 +101,8 @@ class Discriminator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, img):
+    def forward(self, img: th.Tensor) -> th.Tensor:
+        """Forward pass to compute the validity of an input image."""
         img_flat = img.view(img.size(0), -1)
         validity = self.model(img_flat)
 
@@ -150,8 +150,8 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    
-    training_ds = th.utils.data.TensorDataset(training_ds['optimal_design'].flatten(1))
+
+    training_ds = th.utils.data.TensorDataset(training_ds["optimal_design"].flatten(1))
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -167,10 +167,9 @@ if __name__ == "__main__":
         """Samples n_designs from the generator."""
         # Sample noise
         z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
-        # THESE BOUNDS ARE PROBLEM DEPENDENT
         gen_imgs = generator(z)
         return gen_imgs
-    
+
     # ----------
     #  Training
     # ----------

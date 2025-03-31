@@ -18,7 +18,6 @@ from torch import nn
 from torchvision import transforms
 import tqdm
 import tyro
-
 import wandb
 
 
@@ -63,7 +62,7 @@ class Args:
 
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim, out_channels=1, g_features=64):
+    def __init__(self, latent_dim: int, out_channels: int = 1, g_features: int = 64):
         """Generator for 100x100 images.
 
         Args:
@@ -82,13 +81,13 @@ class Generator(nn.Module):
                 in_channels=g_features * 4, out_channels=g_features * 2, kernel_size=4, stride=2, padding=1, bias=False
             ),
             nn.BatchNorm2d(g_features * 2),
-            nn.ReLU(True),
+            nn.ReLU(inplace=True),
             # (g_features*2, 50, 50) -> (g_features, 100, 100)
             nn.ConvTranspose2d(
                 in_channels=g_features * 2, out_channels=g_features, kernel_size=4, stride=2, padding=1, bias=False
             ),
             nn.BatchNorm2d(g_features),
-            nn.ReLU(True),
+            nn.ReLU(inplace=True),
             # (g_features, 100, 100) -> (out_channels, 100, 100)
             nn.ConvTranspose2d(
                 in_channels=g_features, out_channels=out_channels, kernel_size=3, stride=1, padding=1, bias=False
@@ -96,8 +95,16 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z):
-        # z: (batch, latent_dim)
+    def forward(self, z: th.Tensor) -> th.Tensor:
+        """Forward pass of the generator.
+
+        Args:
+            z (torch.Tensor): Input latent vector.
+
+        Returns:
+            torch.Tensor: Generated image tensor.
+        """
+        # Input tensor z has shape (batch, latent_dim)
         out = self.fc(z)  # (batch, g_features*4*25*25)
         out = out.view(out.size(0), -1, self.init_size, self.init_size)
         img = self.conv_blocks(out)  # (batch, out_channels, 100, 100)
@@ -105,7 +112,7 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, in_channels=1, d_features=64):
+    def __init__(self, in_channels: int = 1, d_features: int = 64):
         super().__init__()
 
         """
@@ -138,13 +145,22 @@ class Discriminator(nn.Module):
         # Final output activation
         self.output_act = nn.Sigmoid()
 
-    def forward(self, img):
-        # img: (batch, in_channels, 100, 100)
+    def forward(self, img: th.Tensor) -> th.Tensor:
+        """Forward pass of the discriminator.
+
+        Args:
+            img (torch.Tensor): Input image tensor.
+
+        Returns:
+            torch.Tensor: Validity score tensor.
+        """
+        # Input image tensor has shape (batch, in_channels, 100, 100)
         out = self.conv_blocks(img)
-        # out: (batch, 1, 1, 1)
+        # Output tensor shape: (batch, 1, 1, 1)
         out = out.view(out.size(0), -1)  # flatten to (batch, 1)
         validity = self.output_act(out)
         return validity
+
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -189,7 +205,9 @@ if __name__ == "__main__":
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
     filtered_ds = th.zeros(len(training_ds), 100, 100, device=device)
     for i in range(len(training_ds)):
-        filtered_ds[i] = transforms.Resize((100, 100))(training_ds[i]['optimal_design'].reshape(1, design_shape[0], design_shape[1]))
+        filtered_ds[i] = transforms.Resize((100, 100))(
+            training_ds[i]["optimal_design"].reshape(1, design_shape[0], design_shape[1])
+        )
     filtered_ds = filtered_ds.unsqueeze(1)
     dataloader = th.utils.data.DataLoader(
         filtered_ds,
@@ -268,7 +286,7 @@ if __name__ == "__main__":
                     # Flatten axes for easy indexing
                     axes = axes.flatten()
 
-                    # Plot each tensor as a iamge plot
+                    # Plot each tensor as a image plot
                     for j, tensor in enumerate(tensors):
                         img = tensor.cpu().numpy()  # Extract x and y coordinates
                         axes[j].imshow(img[0])  # image plot

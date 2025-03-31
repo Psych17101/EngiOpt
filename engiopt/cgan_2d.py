@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
-import torchvision.transforms as transforms
 import tqdm
 import tyro
 import wandb
@@ -66,8 +65,8 @@ class Generator(nn.Module):
     def __init__(self, latent_dim: int, n_conds: int, design_shape: tuple):
         super().__init__()
         self.design_shape = design_shape  # Store design shape
-        
-        def block(in_feat: int, out_feat: int, normalize: bool = True):
+
+        def block(in_feat: int, out_feat: int, *, normalize: bool = True) -> list[nn.Module]:
             layers = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
@@ -84,6 +83,15 @@ class Generator(nn.Module):
         )
 
     def forward(self, z: th.Tensor, objs: th.Tensor) -> th.Tensor:
+        """Forward pass for the generator.
+
+        Args:
+            z (th.Tensor): Latent space input tensor.
+            objs (th.Tensor): Condition tensor.
+
+        Returns:
+            th.Tensor: Generated design tensor.
+        """
         gen_input = th.cat((z, objs), -1)
         design = self.model(gen_input)
         design = design.view(design.size(0), *self.design_shape)
@@ -95,7 +103,7 @@ class Discriminator(nn.Module):
         super().__init__()
 
         self.model = nn.Sequential(
-            nn.Linear(int(np.prod(design_shape)) + n_conds, 512),  
+            nn.Linear(int(np.prod(design_shape)) + n_conds, 512),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(512, 512),
             nn.Dropout(0.4),
@@ -108,6 +116,15 @@ class Discriminator(nn.Module):
         )
 
     def forward(self, design: th.Tensor, objs: th.Tensor) -> th.Tensor:
+        """Forward pass for the discriminator.
+
+        Args:
+            design (th.Tensor): Input design tensor.
+            objs (th.Tensor): Condition tensor.
+
+        Returns:
+            th.Tensor: Validity score for the input design.
+        """
         design_flat = design.view(design.size(0), -1)
         d_in = th.cat((design_flat, objs), -1)
         validity = self.model(d_in)
@@ -156,10 +173,10 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    
-    training_ds = th.utils.data.TensorDataset(training_ds['optimal_design'].flatten(1), 
-                                              *[training_ds[key] for key, _ in problem.conditions]
-                                              )
+
+    training_ds = th.utils.data.TensorDataset(
+        training_ds["optimal_design"].flatten(1), *[training_ds[key] for key in problem.conditions_keys]
+    )
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -175,9 +192,10 @@ if __name__ == "__main__":
         """Samples n_designs from the generator."""
         # Sample noise
         z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
-        # THESE BOUNDS ARE PROBLEM DEPENDENT
 
-        linspaces = [th.linspace(objs[:, i].min(), objs[:, i].max(), n_designs, device=device) for i in range(objs.shape[1])]
+        linspaces = [
+            th.linspace(objs[:, i].min(), objs[:, i].max(), n_designs, device=device) for i in range(objs.shape[1])
+        ]
 
         desired_objs = th.stack(linspaces, dim=1)
         gen_imgs = generator(z, desired_objs)

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import os
 import dataclasses
+import os
 
+from dataset_sample_conditions import sample_conditions
+from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import numpy as np
 import torch as th
-import wandb
 import tyro
+import wandb
 
-from engibench.utils.all_problems import BUILTIN_PROBLEMS
 from engiopt import metrics
 from engiopt.cgan_cnn_2d import Generator
 
@@ -51,26 +52,13 @@ if __name__ == "__main__":
         device = th.device("cpu")
 
     ### Set up testing conditions ###
-    n_samples = args.n_samples
-    # Extract the test dataset and conditions
-    test_ds = problem.dataset["test"] 
-    condition_keys = [key for key, _ in problem.conditions]
-    conditions_ds = test_ds.select_columns(condition_keys)
-
-    # Sample conditions and test_ds designs at random indices
-    selected_indices = np.random.choice(len(test_ds), n_samples, replace=True)
-    sampled_conditions = conditions_ds.select(selected_indices)
-    sampled_designs_np = np.array(test_ds['optimal_design'])[selected_indices]
-
-    # Create tensor for conditions to be used in the generator
-    conditions_list = list(sampled_conditions[:].values())
-    conditions_list = list(map(list, zip(*conditions_list)))
-    conditions_tensor = th.tensor(conditions_list, dtype=th.float32, device=device)
+    conditions_tensor, sampled_conditions, sampled_designs_np, selected_indices = sample_conditions(
+        problem=problem, n_samples=args.n_samples, device=device, seed=args.seed
+    )
 
     # Reshape to match the expected input shape for the model
     conditions_tensor = conditions_tensor.unsqueeze(-1).unsqueeze(-1)
 
-    
     ### Set Up Generator ###
 
     # Restores the pytorch model from wandb
@@ -78,7 +66,7 @@ if __name__ == "__main__":
         artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_cgan_cnn_2d_generator:seed_{args.seed}"
     else:
         artifact_path = f"{args.wandb_project}/{args.problem_id}_cgan_cnn_2d_generator:seed_{args.seed}"
-  
+
     api = wandb.Api()
     artifact = api.artifact(artifact_path, type="model")
     run = artifact.logged_by()
@@ -86,28 +74,25 @@ if __name__ == "__main__":
 
     ckpt_path = os.path.join(artifact_dir, "generator.pth")
     ckpt = th.load(ckpt_path)
-    model = Generator(latent_dim=run.config["latent_dim"], 
-                    n_conds=len(problem.conditions),
-                    design_shape=problem.design_space.shape
-                    )
+    model = Generator(
+        latent_dim=run.config["latent_dim"], n_conds=len(problem.conditions), design_shape=problem.design_space.shape
+    )
     model.load_state_dict(ckpt["generator"])
     model.eval()  # Set to evaluation mode
     model.to(device)
 
     # Sample noise as generator input
-    z = th.randn((n_samples, run.config["latent_dim"], 1, 1), device=device, dtype=th.float)
+    z = th.randn((args.n_samples, run.config["latent_dim"], 1, 1), device=device, dtype=th.float)
 
     # Generate a batch of designs
     gen_designs = model(z, conditions_tensor)
     gen_designs_np = gen_designs.detach().cpu().numpy()
-    gen_designs_np = gen_designs_np.reshape(n_samples, *problem.design_space.shape)
+    gen_designs_np = gen_designs_np.reshape(args.n_samples, *problem.design_space.shape)
 
     # Clip to boundaries for running THIS IS PROBLEM DEPENDENT
     gen_designs_np = np.clip(gen_designs_np, 1e-3, 1)
 
     # Compute metrics
-    metrics = metrics.metrics(problem, gen_designs_np, sampled_designs_np, sampled_conditions, sigma = args.sigma)
+    metrics = metrics.metrics(problem, gen_designs_np, sampled_designs_np, sampled_conditions, sigma=args.sigma)
 
     print(metrics)
-
-    

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import os
 import dataclasses
+import os
 
+from dataset_sample_conditions import sample_conditions
+from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import numpy as np
 import torch as th
-import wandb
 import tyro
+import wandb
 
-from engibench.utils.all_problems import BUILTIN_PROBLEMS
 from engiopt import metrics
 from engiopt.gan_2d import Generator
 
@@ -51,17 +52,10 @@ if __name__ == "__main__":
         device = th.device("cpu")
 
     ### Set up testing conditions ###
-    n_samples = args.n_samples
-    # Extract the test dataset and conditions
-    test_ds = problem.dataset["test"] 
-    condition_keys = [key for key, _ in problem.conditions]
-    conditions_ds = test_ds.select_columns(condition_keys)
+    conditions_tensor, sampled_conditions, sampled_designs_np, selected_indices = sample_conditions(
+        problem=problem, n_samples=args.n_samples, device=device, seed=args.seed
+    )
 
-    # Sample conditions and test_ds designs at random indices
-    selected_indices = np.random.choice(len(test_ds), n_samples, replace=True)
-    sampled_conditions = conditions_ds.select(selected_indices)
-    sampled_designs_np = np.array(test_ds['optimal_design'])[selected_indices]
-    
     ### Set Up Generator ###
 
     # Restores the pytorch model from wandb
@@ -69,7 +63,7 @@ if __name__ == "__main__":
         artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_gan_2d_generator:seed_{args.seed}"
     else:
         artifact_path = f"{args.wandb_project}/{args.problem_id}_gan_2d_generator:seed_{args.seed}"
-  
+
     api = wandb.Api()
     artifact = api.artifact(artifact_path, type="model")
     run = artifact.logged_by()
@@ -77,14 +71,13 @@ if __name__ == "__main__":
 
     ckpt_path = os.path.join(artifact_dir, "generator.pth")
     ckpt = th.load(ckpt_path)
-    model = Generator(latent_dim=run.config["latent_dim"],
-                    design_shape=problem.design_space.shape)
+    model = Generator(latent_dim=run.config["latent_dim"], design_shape=problem.design_space.shape)
     model.load_state_dict(ckpt["generator"])
     model.eval()  # Set to evaluation mode
     model.to(device)
 
     # Sample noise as generator input
-    z = th.randn((n_samples, run.config["latent_dim"]), device=device, dtype=th.float)
+    z = th.randn((args.n_samples, run.config["latent_dim"]), device=device, dtype=th.float)
 
     # Generate a batch of designs
     gen_designs = model(z)
@@ -97,5 +90,3 @@ if __name__ == "__main__":
     metrics = metrics.metrics(problem, gen_designs_np, sampled_designs_np, sampled_conditions, sigma=args.sigma)
 
     print(metrics)
-
-    

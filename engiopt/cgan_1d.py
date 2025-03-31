@@ -18,7 +18,6 @@ import torch as th
 from torch import nn
 import tqdm
 import tyro
-
 import wandb
 
 
@@ -44,7 +43,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 600
+    n_epochs: int = 1000
     """number of epochs of training"""
     batch_size: int = 64
     """size of the batches"""
@@ -58,17 +57,16 @@ class Args:
     """number of cpu threads to use during batch generation"""
     latent_dim: int = 100
     """dimensionality of the latent space"""
-    n_objs: int = 2
-    """number of objectives -- used as conditional input"""
     sample_interval: int = 400
     """interval between image samples"""
 
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim: int, n_objs: int, design_shape: tuple):
+    def __init__(self, latent_dim: int, n_conds: int, design_shape: tuple):
         super().__init__()
+        self.design_shape = design_shape  # Store design shape
 
-        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:  # noqa: FBT001, FBT002
+        def block(in_feat: int, out_feat: int, *, normalize: bool = True) -> list[nn.Module]:
             layers = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
@@ -76,7 +74,7 @@ class Generator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *block(latent_dim + n_objs, 128, normalize=False),
+            *block(latent_dim + n_conds, 128, normalize=False),
             *block(128, 256),
             *block(256, 512),
             *block(512, 1024),
@@ -84,11 +82,19 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z: th.Tensor, objs: th.Tensor) -> th.Tensor:  # noqa: D102
-        # Concatenate noise and objs to produce input
+    def forward(self, z: th.Tensor, objs: th.Tensor) -> th.Tensor:
+        """Forward pass for the generator.
+
+        Args:
+            z (th.Tensor): Latent space input tensor.
+            objs (th.Tensor): Condition tensor.
+
+        Returns:
+            th.Tensor: Generated design tensor.
+        """
         gen_input = th.cat((z, objs), -1)
         design = self.model(gen_input)
-        design = design.view(design.size(0), *design_shape)
+        design = design.view(design.size(0), *self.design_shape)
         return design
 
 
@@ -97,7 +103,7 @@ class Discriminator(nn.Module):
         super().__init__()
 
         self.model = nn.Sequential(
-            nn.Linear(int(np.prod(design_shape)) + args.n_objs, 512),
+            nn.Linear(int(np.prod(design_shape)) + n_conds, 512),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(512, 512),
             nn.Dropout(0.4),
@@ -113,7 +119,6 @@ class Discriminator(nn.Module):
         design_flat = design.view(design.size(0), -1)
         d_in = th.cat((design_flat, objs), -1)
         validity = self.model(d_in)
-
         return validity
 
 
@@ -124,6 +129,7 @@ if __name__ == "__main__":
     problem.reset(seed=args.seed)
 
     design_shape = problem.design_space.shape
+    n_conds = len(problem.conditions)
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -139,7 +145,7 @@ if __name__ == "__main__":
     os.makedirs("images", exist_ok=True)
 
     if th.backends.mps.is_available():
-        device = th.device("mps") 
+        device = th.device("mps")
     elif th.cuda.is_available():
         device = th.device("cuda")
     else:
@@ -149,7 +155,7 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator(args.latent_dim, args.n_objs, design_shape)
+    generator = Generator(args.latent_dim, n_conds, design_shape)
     discriminator = Discriminator()
 
     generator.to(device)
@@ -158,7 +164,10 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    print(training_ds.shape)
+
+    training_ds = th.utils.data.TensorDataset(
+        training_ds["optimal_design"].flatten(1), *[training_ds[key] for key in problem.conditions_keys]
+    )
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -174,10 +183,12 @@ if __name__ == "__main__":
         """Samples n_designs from the generator."""
         # Sample noise
         z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
-        # THESE BOUNDS ARE PROBLEM DEPENDENT
-        cls = th.linspace(0.3, 1.2, n_designs, device=device)
-        cds = th.linspace(71, 600, n_designs, device=device)
-        desired_objs = th.stack((cls, cds), dim=1).to(th.float64)
+
+        linspaces = [
+            th.linspace(objs[:, i].min(), objs[:, i].max(), n_designs, device=device) for i in range(objs.shape[1])
+        ]
+
+        desired_objs = th.stack(linspaces, dim=1)
         gen_imgs = generator(z, desired_objs)
         return desired_objs, gen_imgs
 
@@ -187,10 +198,9 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # THIS IS PROBLEM DEPENDENT
-            designs = data["optimized"]
-            cl = data["cl_val"].to(th.float64)
-            cd = data["cd_val"].to(th.float64)
-            objs = th.stack((cl, cd), dim=1)
+            designs = data[0]
+
+            objs = th.stack((data[1:]), dim=1)
 
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
@@ -256,12 +266,10 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
-                        x, y = tensor.cpu()  # Extract x and y coordinates
-                        cl, cd = desired_objs[j].cpu()
+                        x, y = tensor.cpu().numpy()  # Extract x and y coordinates
+                        do = desired_objs[j].cpu()
                         axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
-                        axes[j].title.set_text(f"CL: {cl:.2f}, CD: {cd:.2f}")
-                        axes[j].set_xlim(-0.1, 1.1)  # Adjust x-axis limits
-                        axes[j].set_ylim(-0.5, 0.5)  # Adjust y-axis limits
+                        axes[j].title.set_text(f"m1: {do[0]:.2f}, m2: {do[1]:.2f}")
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 
