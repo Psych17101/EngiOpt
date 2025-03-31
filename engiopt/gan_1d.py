@@ -10,7 +10,7 @@ import os
 import random
 import time
 
-from engibench.utils.all_problems import all_problems
+from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
@@ -24,7 +24,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d_v0"
+    problem_id: str = "airfoil2d"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -109,7 +109,7 @@ class Discriminator(nn.Module):
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
-    problem = all_problems[args.problem_id].build()
+    problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
     design_shape = problem.design_space.shape
@@ -261,12 +261,12 @@ if __name__ == "__main__":
 
                         th.save(ckpt_gen, "generator.pth")
                         th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact("generator", type="model")
+                        artifact_gen = wandb.Artifact(f"{args.algo}_generator", type="model")
                         artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact("discriminator", type="model")
+                        artifact_disc = wandb.Artifact(f"{args.algo}_discriminator", type="model")
                         artifact_disc.add_file("discriminator.pth")
 
-                        wandb.log_artifact(artifact_gen)
-                        wandb.log_artifact(artifact_disc)
+                        wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                        wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from engibench.core import Problem
-from engibench.utils.all_problems import all_problems
+from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import numpy as np
 import tyro
 
@@ -12,22 +12,20 @@ import tyro
 class Args:
     """Command-line arguments."""
 
-    problem: str = "airfoil2d_v0"
+    problem: str = "heatconduction2d"
     """Problem identifier."""
     seed: int = 1
     """Random seed."""
-    mpicores: int = 1
-    """Number of MPI cores."""
 
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
-    problem: Problem = all_problems[args.problem].build()
+    problem: Problem = BUILTIN_PROBLEMS[args.problem]()
     problem.reset(seed=args.seed)
 
-    candidate_design = np.array(problem.dataset["test"]["initial"][0])
+    candidate_design = np.array(problem.dataset["train"]["optimal_design"][0])
     print(f"Initial design: {candidate_design}")
 
-    obj_values, design = problem.optimize(starting_point=candidate_design, mpicores=args.mpicores)
+    obj_values, design = problem.optimize(starting_point=candidate_design)
     print(f"Objective values: {obj_values}")
     print(f"Optimized design: {design}")

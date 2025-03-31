@@ -12,7 +12,7 @@ import time
 
 from denoising_diffusion_pytorch import GaussianDiffusion1D
 from denoising_diffusion_pytorch import Unet1D
-from engibench.utils.all_problems import all_problems
+from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
@@ -25,7 +25,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d_v0"
+    problem_id: str = "airfoil2d"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -64,7 +64,7 @@ class Args:
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
-    problem = all_problems[args.problem_id].build()
+    problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
     design_shape = problem.design_space.shape
@@ -121,7 +121,7 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # THIS IS PROBLEM DEPENDENT
-            designs = data["optimized"]
+            designs = data["optimal_design"]
             designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs to a batch of 1D tensors with 1 channel
 
             # Learning
@@ -175,8 +175,9 @@ if __name__ == "__main__":
                         }
 
                         th.save(ckpt, "model.pth")
-                        artifact = wandb.Artifact("diffusion", type="model")
+                        artifact = wandb.Artifact(f"{args.algo}_model", type="model")
                         artifact.add_file("model.pth")
-                        wandb.log_artifact(artifact)
+
+                        wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()
