@@ -3,6 +3,7 @@
 Also formats for use in problem.optimize and problem.simulate
 """
 
+from datasets import Dataset
 from engibench.core import Problem
 import numpy as np
 import torch as th
@@ -10,7 +11,7 @@ import torch as th
 
 def sample_conditions(
     problem: Problem, n_samples: int, device: str, seed: int
-) -> tuple[th.Tensor, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[th.Tensor, Dataset, np.ndarray, np.ndarray]:
     """Samples conditions and designs from the dataset and prepares tensors for the generator.
 
     Args:
@@ -21,7 +22,7 @@ def sample_conditions(
 
     Returns:
     conditions_tensor: A PyTorch tensor of sampled conditions, reshaped for the generator.
-    sampled_conditions: A NumPy array of sampled conditions.
+    sampled_conditions: A Hugging Face Dataset object of sampled conditions.
     sampled_designs_np: A NumPy array of sampled optimal designs.
     selected_indices: The indices of the sampled conditions and designs.
     """

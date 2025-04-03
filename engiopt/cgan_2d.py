@@ -82,17 +82,17 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z: th.Tensor, objs: th.Tensor) -> th.Tensor:
+    def forward(self, z: th.Tensor, conds: th.Tensor) -> th.Tensor:
         """Forward pass for the generator.
 
         Args:
             z (th.Tensor): Latent space input tensor.
-            objs (th.Tensor): Condition tensor.
+            conds (th.Tensor): Condition tensor.
 
         Returns:
             th.Tensor: Generated design tensor.
         """
-        gen_input = th.cat((z, objs), -1)
+        gen_input = th.cat((z, conds), -1)
         design = self.model(gen_input)
         design = design.view(design.size(0), *self.design_shape)
         return design
@@ -115,18 +115,18 @@ class Discriminator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, design: th.Tensor, objs: th.Tensor) -> th.Tensor:
+    def forward(self, design: th.Tensor, conds: th.Tensor) -> th.Tensor:
         """Forward pass for the discriminator.
 
         Args:
             design (th.Tensor): Input design tensor.
-            objs (th.Tensor): Condition tensor.
+            conds (th.Tensor): Condition tensor.
 
         Returns:
             th.Tensor: Validity score for the input design.
         """
         design_flat = design.view(design.size(0), -1)
-        d_in = th.cat((design_flat, objs), -1)
+        d_in = th.cat((design_flat, conds), -1)
         validity = self.model(d_in)
         return validity
 
@@ -194,12 +194,12 @@ if __name__ == "__main__":
         z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
 
         linspaces = [
-            th.linspace(objs[:, i].min(), objs[:, i].max(), n_designs, device=device) for i in range(objs.shape[1])
+            th.linspace(conds[:, i].min(), conds[:, i].max(), n_designs, device=device) for i in range(conds.shape[1])
         ]
 
-        desired_objs = th.stack(linspaces, dim=1)
-        gen_imgs = generator(z, desired_objs)
-        return desired_objs, gen_imgs
+        desired_conds = th.stack(linspaces, dim=1)
+        gen_imgs = generator(z, desired_conds)
+        return desired_conds, gen_imgs
 
     # ----------
     #  Training
@@ -209,7 +209,7 @@ if __name__ == "__main__":
             # THIS IS PROBLEM DEPENDENT
             designs = data[0]
 
-            objs = th.stack((data[1:]), dim=1)
+            conds = th.stack((data[1:]), dim=1)
 
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
@@ -225,10 +225,10 @@ if __name__ == "__main__":
             z = th.randn((designs.size(0), args.latent_dim), device=device, dtype=th.float)
 
             # Generate a batch of images
-            gen_designs = generator(z, objs)
+            gen_designs = generator(z, conds)
 
             # Loss measures generator's ability to fool the discriminator
-            g_loss = adversarial_loss(discriminator(gen_designs, objs), valid)
+            g_loss = adversarial_loss(discriminator(gen_designs, conds), valid)
 
             g_loss.backward()
             optimizer_generator.step()
@@ -240,8 +240,8 @@ if __name__ == "__main__":
             optimizer_discriminator.zero_grad()
 
             # Measure discriminator's ability to classify real from generated samples
-            real_loss = adversarial_loss(discriminator(designs, objs), valid)
-            fake_loss = adversarial_loss(discriminator(gen_designs.detach(), objs), fake)
+            real_loss = adversarial_loss(discriminator(designs, conds), valid)
+            fake_loss = adversarial_loss(discriminator(gen_designs.detach(), conds), fake)
             d_loss = (real_loss + fake_loss) / 2
 
             d_loss.backward()

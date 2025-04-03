@@ -285,12 +285,12 @@ if __name__ == "__main__":
         z = th.randn((n_designs, args.latent_dim, 1, 1), device=device, dtype=th.float)
 
         linspaces = [
-            th.linspace(objs[:, i].min(), objs[:, i].max(), n_designs, device=device) for i in range(objs.shape[1])
+            th.linspace(conds[:, i].min(), conds[:, i].max(), n_designs, device=device) for i in range(conds.shape[1])
         ]
 
-        desired_objs = th.stack(linspaces, dim=1)
-        gen_imgs = generator(z, desired_objs.reshape(-1, objs.shape[1], 1, 1))
-        return desired_objs, gen_imgs
+        desired_conds = th.stack(linspaces, dim=1)
+        gen_imgs = generator(z, desired_conds.reshape(-1, conds.shape[1], 1, 1))
+        return desired_conds, gen_imgs
 
     # ----------
     #  Training
@@ -300,7 +300,7 @@ if __name__ == "__main__":
             # THIS IS PROBLEM DEPENDENT
             designs = data[0]
 
-            objs = th.stack((data[1:]), dim=1).reshape(-1, n_conds, 1, 1)
+            conds = th.stack((data[1:]), dim=1).reshape(-1, n_conds, 1, 1)
 
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
@@ -316,10 +316,10 @@ if __name__ == "__main__":
             z = th.randn((designs.size(0), args.latent_dim, 1, 1), device=device, dtype=th.float)
 
             # Generate a batch of images
-            gen_designs = generator(z, objs)
+            gen_designs = generator(z, conds)
 
             # Loss measures generator's ability to fool the discriminator
-            g_loss = adversarial_loss(discriminator(gen_designs, objs)[:, 0, 0], valid)
+            g_loss = adversarial_loss(discriminator(gen_designs, conds)[:, 0, 0], valid)
 
             g_loss.backward()
             optimizer_generator.step()
@@ -332,9 +332,9 @@ if __name__ == "__main__":
 
             # Measure discriminator's ability to classify real from generated samples
             real_loss = adversarial_loss(
-                discriminator(designs.reshape(-1, 1, design_shape[0], design_shape[1]), objs)[:, 0, 0], valid
+                discriminator(designs.reshape(-1, 1, design_shape[0], design_shape[1]), conds)[:, 0, 0], valid
             )
-            fake_loss = adversarial_loss(discriminator(gen_designs.detach(), objs)[:, 0, 0], fake)
+            fake_loss = adversarial_loss(discriminator(gen_designs.detach(), conds)[:, 0, 0], fake)
             d_loss = (real_loss + fake_loss) / 2
 
             d_loss.backward()
@@ -360,7 +360,7 @@ if __name__ == "__main__":
                 # This saves a grid image of 25 generated designs every sample_interval
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
-                    desired_objs, designs = sample_designs(25)
+                    desired_conds, designs = sample_designs(25)
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
                     # Flatten axes for easy indexing
@@ -369,7 +369,7 @@ if __name__ == "__main__":
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
                         img = tensor.cpu().numpy().reshape(design_shape[0], design_shape[1])  # Extract x and y coordinates
-                        do = desired_objs[j].cpu()
+                        do = desired_conds[j].cpu()
                         axes[j].imshow(img)  # Scatter plot
                         axes[j].title.set_text(f"volfrac: {do[0]:.2f}")
                         axes[j].set_xticks([])  # Hide x ticks

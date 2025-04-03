@@ -80,7 +80,7 @@ def optimality_gap(opt_history: list[OptiStep], baseline: float) -> list[float]:
     Returns:
         list[float]: The optimality gap at each step in opt_history.
     """
-    return [opt.obj_values - float(baseline) for opt in opt_history]
+    return [opt.obj_values - baseline for opt in opt_history]
 
 
 def metrics(
@@ -101,11 +101,11 @@ def metrics(
 
     Returns:
         dict[str, float]: A dictionary containing the computed metrics:
-            - "average_IOG": Average Initial Optimality Gap (float).
-            - "average_COG": Average Cumulative Optimality Gap (float).
-            - "average_FOG": Average Final Optimality Gap (float).
-            - "mmd_value": Maximum Mean Discrepancy (float).
-            - "dpp_value": Determinantal Point Process diversity (float).
+            - "iog": Average Initial Optimality Gap (float).
+            - "cog": Average Cumulative Optimality Gap (float).
+            - "fog": Average Final Optimality Gap (float).
+            - "mmd": Maximum Mean Discrepancy (float).
+            - "dpp": Determinantal Point Process diversity (float).
     """
     n_samples = len(gen_designs)
 
@@ -135,9 +135,9 @@ def metrics(
 
     # Return all computed metrics as a dictionary
     return {
-        "IOG": average_iog,
-        "COG": average_cog,
-        "FOG": average_fog,
+        "iog": average_iog,
+        "cog": average_cog,
+        "fog": average_fog,
         "mmd": mmd_value,
         "dpp": dpp_value,
     }
