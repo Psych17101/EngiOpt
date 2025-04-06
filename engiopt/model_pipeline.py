@@ -43,18 +43,22 @@ class DataPreprocessor:
         self.categorical_mapping: Dict[str, List[str]] = {}
 
     def preprocess_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        # 1) Strip column spaces if requested
+        # 1) Strip column spaces if requested.
         if self.args.get("strip_column_spaces", False):
             df.columns = [col.strip() for col in df.columns]
-        # 2) Flatten columns if requested
+
+        # 2) Flatten columns if requested.
         flatten_cols = self.args.get("flatten_columns", [])
         if flatten_cols:
             df = self._flatten_list_columns(df, flatten_cols)
-        # 3) Subset condition
+            print(f"[DataPreprocessor] Flattened columns: {df.columns}")
+
+        # 3) Subset condition.
         subset_condition = self.args.get("subset_condition", None)
         if subset_condition:
             df = df.query(subset_condition)
-        # 4) Nondimensionalization
+
+        # 4) Nondimensionalization.
         nondim_map = self.args.get("nondim_map", None)
         if nondim_map:
             if isinstance(nondim_map, str):
@@ -62,12 +66,14 @@ class DataPreprocessor:
             for col, ref in nondim_map.items():
                 if col in df.columns and ref in df.columns:
                     df[col] = df[col] / df[ref]
-        # 5) Log-transform target if requested
+
+        # 5) Log-transform target if requested.
         if self.args.get("log_target", False):
             target_col = self.args.get("target_col", None)
             if target_col in df.columns:
                 df[target_col] = np.log(df[target_col])
                 print(f"[DataPreprocessor] Applied log-transform to {target_col}")
+
         return df
 
     def transform_inputs(
@@ -223,58 +229,57 @@ class DataPreprocessor:
         return final_df
 
     def _flatten_list_columns(self, df: pd.DataFrame, columns_to_flatten: list) -> pd.DataFrame:
-        """Flattens specified columns in which each entry can be a list or tuple.
-
+        """
+        Flattens specified columns in which each entry can be a list, tuple, or numpy.ndarray.
         For each flattened column, creates new columns named '{original_col}_{index}'.
-        Ensures all rows in a column have the same length of nested list/tuple.
-
-        Args:
-            df (pd.DataFrame): DataFrame in which columns will be flattened.
-            columns_to_flatten (list): The list of column names to flatten.
-
-        Raises:
-            ValueError: If any column has varying list lengths among rows.
-
-        Returns:
-            pd.DataFrame: A new DataFrame with flattened columns replaced by multiple
-            expanded columns.
         """
         new_cols_list = []
         drop_cols = []
+
         for col in columns_to_flatten:
             if col not in df.columns:
                 continue
+
+            # Check the first row's value.
             first_val = df[col].iloc[0]
+
+            # If it's a string that might represent a list, try literal_eval.
             if isinstance(first_val, str):
                 try:
                     _ = ast.literal_eval(first_val)
                     df[col] = df[col].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
-                except Exception:
-                    continue
+                except Exception as e:
+                    print(f"[WARN] Could not parse '{col}' as string literal: {e}. Proceeding.")
+
+            # If the value is not a list/tuple/ndarray, but is iterable, cast it.
+            if not isinstance(df[col].iloc[0], (list, tuple, np.ndarray)):
+                if hasattr(df[col].iloc[0], "__iter__") and not isinstance(df[col].iloc[0], str):
+                    df[col] = df[col].apply(lambda x: list(x) if x is not None else x)
+
+            # Also, if it is a numpy array, convert it to a list.
+            if isinstance(df[col].iloc[0], np.ndarray):
+                df[col] = df[col].apply(lambda x: x.tolist())
+
+            # Now, if we have a list or tuple, flatten.
             if isinstance(df[col].iloc[0], (list, tuple)):
+                # Use recursive flattening.
                 flattened_rows = [self._recursive_flatten(x) for x in df[col]]
                 lengths = [len(row) for row in flattened_rows]
                 if len(set(lengths)) > 1:
-                    raise ValueError(f"Column '{col}' has varying lengths among rows.")
+                    raise ValueError(f"Column '{col}' has varying lengths among rows: {set(lengths)}")
                 n = lengths[0]
                 new_col_names = [f"{col}_{i}" for i in range(n)]
                 expanded_df = pd.DataFrame(flattened_rows, columns=new_col_names)
                 new_cols_list.append(expanded_df)
                 drop_cols.append(col)
+            else:
+                print(f"Column '{col}' is not recognized as list-like; skipping flatten.")
+
         if new_cols_list:
             df = pd.concat([df.drop(columns=drop_cols).reset_index(drop=True)] + new_cols_list, axis=1)
         return df
 
     def _recursive_flatten(self, val):
-        """Recursively flattens nested lists or tuples into a single list.
-
-        Args:
-            val: A scalar, list, or tuple. If scalar, returns [val].
-                If nested list or tuple, flattens to one-dimensional list.
-
-        Returns:
-            list: A fully flattened list of values.
-        """
         if not isinstance(val, (list, tuple)):
             return [val]
         result = []
