@@ -389,7 +389,7 @@ if __name__ == "__main__":
                         do = hidden_states[j, 0, :].cpu()
                         axes[j].imshow(img[0])  # image plot
                         title = [(problem.conditions[i][0], f"{do[i]:.2f}") for i in range(len(problem.conditions))]
-                        title_string = "\n ".join(f"{condition}: {value}" for condition, value in title) 
+                        title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
                         axes[j].title.set_text(title_string)  # Set title
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
