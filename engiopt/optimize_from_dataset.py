@@ -12,12 +12,10 @@ import tyro
 class Args:
     """Command-line arguments."""
 
-    problem: str = "airfoil2d"
+    problem: str = "heatconduction2d"
     """Problem identifier."""
     seed: int = 1
     """Random seed."""
-    mpicores: int = 1
-    """Number of MPI cores."""
 
 
 if __name__ == "__main__":
@@ -25,9 +23,9 @@ if __name__ == "__main__":
     problem: Problem = BUILTIN_PROBLEMS[args.problem]()
     problem.reset(seed=args.seed)
 
-    candidate_design = np.array(problem.dataset["test"]["initial"][0])
+    candidate_design = np.array(problem.dataset["train"]["optimal_design"][0])
     print(f"Initial design: {candidate_design}")
 
-    obj_values, design = problem.optimize(starting_point=candidate_design, mpicores=args.mpicores)
+    obj_values, design = problem.optimize(starting_point=candidate_design)
     print(f"Objective values: {obj_values}")
     print(f"Optimized design: {design}")
