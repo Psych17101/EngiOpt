@@ -1,7 +1,6 @@
 """This code is largely based on the excellent PyTorch GAN repo: https://github.com/eriklindernoren/PyTorch-GAN.
 
 We essentially refreshed the Python style, use wandb for logging, and made a few little improvements.
-There are also a couple of code parts that are problem dependent and need to be adjusted for the specific problem.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
+from torchvision import transforms
 import tqdm
 import tyro
 import wandb
@@ -25,7 +25,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "beams2d"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -43,9 +43,9 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 200
+    n_epochs: int = 1000
     """number of epochs of training"""
-    batch_size: int = 64
+    batch_size: int = 32
     """size of the batches"""
     lr: float = 3e-4
     """learning rate"""
@@ -57,62 +57,108 @@ class Args:
     """number of cpu threads to use during batch generation"""
     latent_dim: int = 100
     """dimensionality of the latent space"""
-    n_objs: int = 2
-    """number of objectives -- used as conditional input"""
     sample_interval: int = 400
     """interval between image samples"""
 
 
 class Generator(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_dim: int, out_channels: int = 1, g_features: int = 64):
+        """Generator for 100x100 images.
+
+        Args:
+            latent_dim (int): Dimensionality of the latent code (z).
+            out_channels (int): Number of channels in the output image.
+            g_features (int): Base number of generator feature maps.
+        """
         super().__init__()
 
-        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:  # noqa: FBT001, FBT002
-            layers = [nn.Linear(in_feat, out_feat)]
-            if normalize:
-                layers.append(nn.BatchNorm1d(out_feat, 0.8))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
+        self.init_size = 25  # create a 25x25 feature map after the first FC
+        self.fc = nn.Linear(latent_dim, g_features * 4 * self.init_size * self.init_size)
 
-        self.model = nn.Sequential(
-            *block(args.latent_dim + args.n_objs, 128, normalize=False),
-            *block(128, 256),
-            *block(256, 512),
-            *block(512, 1024),
-            nn.Linear(1024, int(np.prod(design_shape))),
+        self.conv_blocks = nn.Sequential(
+            # (g_features*4, 25, 25) -> (g_features*2, 50, 50)
+            nn.ConvTranspose2d(
+                in_channels=g_features * 4, out_channels=g_features * 2, kernel_size=4, stride=2, padding=1, bias=False
+            ),
+            nn.BatchNorm2d(g_features * 2),
+            nn.ReLU(inplace=True),
+            # (g_features*2, 50, 50) -> (g_features, 100, 100)
+            nn.ConvTranspose2d(
+                in_channels=g_features * 2, out_channels=g_features, kernel_size=4, stride=2, padding=1, bias=False
+            ),
+            nn.BatchNorm2d(g_features),
+            nn.ReLU(inplace=True),
+            # (g_features, 100, 100) -> (out_channels, 100, 100)
+            nn.ConvTranspose2d(
+                in_channels=g_features, out_channels=out_channels, kernel_size=3, stride=1, padding=1, bias=False
+            ),
             nn.Tanh(),
         )
 
-    def forward(self, z: th.Tensor, objs: th.Tensor) -> th.Tensor:  # noqa: D102
-        # Concatenate noise and objs to produce input
-        gen_input = th.cat((z, objs), -1)
-        design = self.model(gen_input)
-        design = design.view(design.size(0), *design_shape)
-        return design
+    def forward(self, z: th.Tensor) -> th.Tensor:
+        """Forward pass of the generator.
+
+        Args:
+            z (torch.Tensor): Input latent vector.
+
+        Returns:
+            torch.Tensor: Generated image tensor.
+        """
+        # Input tensor z has shape (batch, latent_dim)
+        out = self.fc(z)  # (batch, g_features*4*25*25)
+        out = out.view(out.size(0), -1, self.init_size, self.init_size)
+        img = self.conv_blocks(out)  # (batch, out_channels, 100, 100)
+        return img
 
 
 class Discriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels: int = 1, d_features: int = 64):
         super().__init__()
 
-        self.model = nn.Sequential(
-            nn.Linear(int(np.prod(design_shape)) + args.n_objs, 512),
+        """
+        Discriminator for 100x100 images.
+
+        Args:
+            in_channels (int): Number of channels in the input image.
+            d_features (int): Base number of discriminator feature maps.
+        """
+        self.conv_blocks = nn.Sequential(
+            # 100 x 100 -> 50 x 50
+            nn.Conv2d(in_channels, d_features, kernel_size=4, stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 512),
-            nn.Dropout(0.4),
+            # 50 x 50 -> 25 x 25
+            nn.Conv2d(d_features, d_features * 2, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(d_features * 2),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 512),
-            nn.Dropout(0.4),
+            # 25 x 25 -> 13 x 13
+            nn.Conv2d(d_features * 2, d_features * 4, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(d_features * 4),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 1),
-            nn.Sigmoid(),
+            # 13 x 13 -> 7 x 7
+            nn.Conv2d(d_features * 4, d_features * 8, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(d_features * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            # 7 x 7 -> 1 x 1
+            nn.Conv2d(d_features * 8, 1, kernel_size=7, stride=1, padding=0, bias=False),
         )
 
-    def forward(self, design: th.Tensor, objs: th.Tensor) -> th.Tensor:  # noqa: D102
-        design_flat = design.view(design.size(0), -1)
-        d_in = th.cat((design_flat, objs), -1)
-        validity = self.model(d_in)
+        # Final output activation
+        self.output_act = nn.Sigmoid()
 
+    def forward(self, img: th.Tensor) -> th.Tensor:
+        """Forward pass of the discriminator.
+
+        Args:
+            img (torch.Tensor): Input image tensor.
+
+        Returns:
+            torch.Tensor: Validity score tensor.
+        """
+        # Input image tensor has shape (batch, in_channels, 100, 100)
+        out = self.conv_blocks(img)
+        # Output tensor shape: (batch, 1, 1, 1)
+        out = out.view(out.size(0), -1)  # flatten to (batch, 1)
+        validity = self.output_act(out)
         return validity
 
 
@@ -148,7 +194,7 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator()
+    generator = Generator(args.latent_dim)
     discriminator = Discriminator()
 
     generator.to(device)
@@ -157,9 +203,14 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    print(training_ds.shape)
+    filtered_ds = th.zeros(len(training_ds), 100, 100, device=device)
+    for i in range(len(training_ds)):
+        filtered_ds[i] = transforms.Resize((100, 100))(
+            training_ds[i]["optimal_design"].reshape(1, design_shape[0], design_shape[1])
+        )
+    filtered_ds = filtered_ds.unsqueeze(1)
     dataloader = th.utils.data.DataLoader(
-        training_ds,
+        filtered_ds,
         batch_size=args.batch_size,
         shuffle=True,
     )
@@ -168,29 +219,11 @@ if __name__ == "__main__":
     optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
     optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
 
-    @th.no_grad()
-    def sample_designs(n_designs: int) -> th.Tensor:
-        """Samples n_designs from the generator."""
-        # Sample noise
-        z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
-        # THESE BOUNDS ARE PROBLEM DEPENDENT
-        cls = th.linspace(0.3, 1.2, n_designs, device=device)
-        cds = th.linspace(71, 600, n_designs, device=device)
-        desired_objs = th.stack((cls, cds), dim=1)
-        gen_imgs = generator(z, desired_objs)
-        return desired_objs, gen_imgs
-
     # ----------
     #  Training
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
-        for i, data in enumerate(dataloader):
-            # THIS IS PROBLEM DEPENDENT
-            designs = data["optimized"]
-            cl = data["cl_val"]
-            cd = data["cd_val"]
-            objs = th.stack((cl, cd), dim=1)
-
+        for i, designs in enumerate(dataloader):
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
             fake = th.zeros((designs.size(0), 1), requires_grad=False, device=device)
@@ -205,10 +238,10 @@ if __name__ == "__main__":
             z = th.randn((designs.size(0), args.latent_dim), device=device, dtype=th.float)
 
             # Generate a batch of images
-            gen_designs = generator(z, objs)
+            gen_designs = generator(z)
 
             # Loss measures generator's ability to fool the discriminator
-            g_loss = adversarial_loss(discriminator(gen_designs, objs), valid)
+            g_loss = adversarial_loss(discriminator(gen_designs), valid)
 
             g_loss.backward()
             optimizer_generator.step()
@@ -220,8 +253,8 @@ if __name__ == "__main__":
             optimizer_discriminator.zero_grad()
 
             # Measure discriminator's ability to classify real from generated samples
-            real_loss = adversarial_loss(discriminator(designs, objs), valid)
-            fake_loss = adversarial_loss(discriminator(gen_designs.detach(), objs), fake)
+            real_loss = adversarial_loss(discriminator(designs), valid)
+            fake_loss = adversarial_loss(discriminator(gen_designs.detach()), fake)
             d_loss = (real_loss + fake_loss) / 2
 
             d_loss.backward()
@@ -247,20 +280,16 @@ if __name__ == "__main__":
                 # This saves a grid image of 25 generated designs every sample_interval
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
-                    desired_objs, designs = sample_designs(25)
+                    tensors = gen_designs.data[:25]
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
                     # Flatten axes for easy indexing
                     axes = axes.flatten()
 
-                    # Plot each tensor as a scatter plot
-                    for j, tensor in enumerate(designs):
-                        x, y = tensor.cpu()  # Extract x and y coordinates
-                        cl, cd = desired_objs[j].cpu()
-                        axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
-                        axes[j].title.set_text(f"CL: {cl:.2f}, CD: {cd:.2f}")
-                        axes[j].set_xlim(-0.1, 1.1)  # Adjust x-axis limits
-                        axes[j].set_ylim(-0.5, 0.5)  # Adjust y-axis limits
+                    # Plot each tensor as a image plot
+                    for j, tensor in enumerate(tensors):
+                        img = tensor.cpu().numpy()  # Extract x and y coordinates
+                        axes[j].imshow(img[0])  # image plot
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 
@@ -291,11 +320,13 @@ if __name__ == "__main__":
 
                         th.save(ckpt_gen, "generator.pth")
                         th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact(f"{args.algo}_generator", type="model")
+                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
                         artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.algo}_discriminator", type="model")
+                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
                         artifact_disc.add_file("discriminator.pth")
 
+                        wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                        wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
                         wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
                         wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 

@@ -43,7 +43,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 200
+    n_epochs: int = 100
     """number of epochs of training"""
     batch_size: int = 64
     """size of the batches"""
@@ -53,12 +53,14 @@ class Args:
     """decay of first order momentum of gradient"""
     b2: float = 0.999
     """decay of first order momentum of gradient"""
-    n_objs: int = 2
-    """number of objectives -- used as conditional input"""
     sample_interval: int = 400
     """interval between image samples"""
     auto_norm: bool = False
     """Automatically normalize the data when learning."""
+    unet_dim: int = 64
+    """Dimensions for the UNET1D"""
+    n_channels: int = 1
+    """number of input channels for the model"""
 
 
 if __name__ == "__main__":
@@ -93,8 +95,8 @@ if __name__ == "__main__":
     #  Models
     # ----------
     model = Unet1D(
-        dim=64,  # Used for the sinusoidal positional embeddings
-        channels=1,  # Number of channels in the input
+        dim=args.unet_dim,  # Used for the sinusoidal positional embeddings
+        channels=args.n_channels,  # Number of channels in the input
     ).to(device)
 
     diffusion = GaussianDiffusion1D(
@@ -105,6 +107,9 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
+    training_ds = th.utils.data.TensorDataset(
+        training_ds["optimal_design"], *[training_ds[key] for key in problem.conditions_keys]
+    )
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -121,6 +126,7 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # THIS IS PROBLEM DEPENDENT
+
             designs = data["optimal_design"]
             designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs to a batch of 1D tensors with 1 channel
 
@@ -175,7 +181,7 @@ if __name__ == "__main__":
                         }
 
                         th.save(ckpt, "model.pth")
-                        artifact = wandb.Artifact(f"{args.algo}_model", type="model")
+                        artifact = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
                         artifact.add_file("model.pth")
 
                         wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
