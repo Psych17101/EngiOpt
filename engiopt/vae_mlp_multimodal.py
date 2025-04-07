@@ -1,5 +1,8 @@
 # ruff: noqa: TRY003
 # ruff: noqa: TRY301
+# ruff: noqa: PLR0913
+# ruff: noqa: PLR0915
+
 """VAE-MLP multimodal training script.
 
 This module provides functionality for training either a plain MLP or a structured
@@ -124,13 +127,9 @@ class Args:
                     if isinstance(parsed_value, list):
                         setattr(self, field_name, parsed_value)
                     else:
-                        raise TypeError(  # ruff: noqa: TRY003, TRY301
-                            f"Expected list for --{field_name}, got {parsed_value}"
-                        )
+                        raise TypeError(f"Expected list for --{field_name}, got {parsed_value}")
                 except Exception as e:
-                    raise ValueError(  # ruff: noqa: TRY003, TRY301
-                        f"Invalid format for --{field_name}: {value}"
-                    ) from e
+                    raise ValueError(f"Invalid format for --{field_name}: {value}") from e
             elif isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
                 first = value[0].strip()
                 if first and first[0] in ("[", "{"):
@@ -139,9 +138,7 @@ class Args:
                         if isinstance(parsed_value, list):
                             setattr(self, field_name, parsed_value)
                     except Exception as e:
-                        raise ValueError(  # ruff: noqa: TRY003, TRY301
-                            f"Invalid format for --{field_name}: {value}"
-                        ) from e
+                        raise ValueError(f"Invalid format for --{field_name}: {value}") from e
 
 
 def get_device(args: Args) -> torch.device:
@@ -160,9 +157,7 @@ def get_device(args: Args) -> torch.device:
     elif args.device == "cpu":
         return torch.device("cpu")
     else:
-        raise ValueError(  # ruff: noqa: TRY003, TRY301
-            f"Invalid device: {args.device}"
-        )
+        raise ValueError(f"Invalid device: {args.device}")
 
 
 def load_data(args: Args) -> pd.DataFrame:
@@ -174,18 +169,14 @@ def load_data(args: Args) -> pd.DataFrame:
     else:
         data_path = os.path.join(args.data_dir, args.data_input)
         if not os.path.isfile(data_path):
-            raise FileNotFoundError(  # ruff: noqa: TRY003, TRY301
-                f"{data_path} does not exist"
-            )
+            raise FileNotFoundError(f"{data_path} does not exist")
         ext = os.path.splitext(data_path)[1].lower()
         if ext == ".csv":
             df_loaded = pd.read_csv(data_path)
         elif ext == ".parquet":
             df_loaded = pd.read_parquet(data_path)
         else:
-            raise ValueError(  # ruff: noqa: TRY003, TRY301
-                "data_input must be CSV or Parquet"
-            )
+            raise ValueError("data_input must be CSV or Parquet")
 
     print("[INFO] DataFrame head:")
     print(df_loaded.head())
@@ -208,14 +199,10 @@ def check_shape_columns(args: Args, df: pd.DataFrame) -> tuple[bool, np.ndarray]
         and any(c.startswith(args.opt_col + "_") for c in df.columns)
     )
     if args.structured and not have_shape_cols:
-        raise ValueError(  # ruff: noqa: TRY003, TRY301
-            "Structured mode but no shape columns found. Check init_col/opt_col settings."
-        )
+        raise ValueError("Structured mode but no shape columns found. Check init_col/opt_col settings.")
 
     if args.target_col not in df.columns:
-        raise ValueError(  # ruff: noqa: TRY003, TRY301
-            f"Missing target_col in DataFrame: {args.target_col}"
-        )
+        raise ValueError(f"Missing target_col in DataFrame: {args.target_col}")
 
     y_all = df[args.target_col].values
     return have_shape_cols, y_all
@@ -309,7 +296,6 @@ def split_inputs(
         }
 
 
-# ruff: noqa: PLR0915
 def scale_data(
     args: Args, split_dict: dict[str, Any]
 ) -> tuple[
@@ -403,7 +389,6 @@ def scale_data(
     )
 
 
-# ruff: noqa: PLR0913
 def test_ensemble(
     args: Args,
     ensemble_models: list[torch.nn.Module],
