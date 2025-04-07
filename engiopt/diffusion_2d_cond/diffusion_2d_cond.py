@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch.nn import functional
-from torchvision import transforms
 import tqdm
 import tyro
 import wandb
@@ -272,7 +271,7 @@ if __name__ == "__main__":
     training_ds = th.utils.data.TensorDataset(
         filtered_ds_norm.flatten(1), *[training_ds[key] for key, _ in problem.conditions]
     )
-    cond_tensors = th.stack(training_ds.tensors[1:len(problem.conditions)+1])
+    cond_tensors = th.stack(training_ds.tensors[1 : len(problem.conditions) + 1])
     conds_min = cond_tensors.amin(dim=tuple(range(1, cond_tensors.ndim)))
     conds_max = cond_tensors.amax(dim=tuple(range(1, cond_tensors.ndim)))
 
@@ -390,7 +389,7 @@ if __name__ == "__main__":
                         do = hidden_states[j, 0, :].cpu()
                         axes[j].imshow(img[0])  # image plot
                         title = [(problem.conditions[i][0], f"{do[i]:.2f}") for i in range(len(problem.conditions))]
-                        title_string = '\n '.join(f"{condition}: {value}" for condition, value in title) 
+                        title_string = "\n ".join(f"{condition}: {value}" for condition, value in title) 
                         axes[j].title.set_text(title_string)  # Set title
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
