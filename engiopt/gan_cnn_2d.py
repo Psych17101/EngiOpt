@@ -194,7 +194,7 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator()
+    generator = Generator(args.latent_dim)
     discriminator = Discriminator()
 
     generator.to(device)

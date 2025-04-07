@@ -242,10 +242,10 @@ if __name__ == "__main__":
 
     # Loss function
     adversarial_loss = th.nn.MSELoss()
-
+    encoder_hid_dim = len(problem.conditions)
     # Initialize UNet from Huggingface
     model = UNet2DConditionModel(
-        sample_size=(100, 100),
+        sample_size=design_shape,
         in_channels=1,
         out_channels=1,
         cross_attention_dim=64,
@@ -253,7 +253,8 @@ if __name__ == "__main__":
         down_block_types=("CrossAttnDownBlock2D", "DownBlock2D"),
         up_block_types=("UpBlock2D", "CrossAttnUpBlock2D"),
         layers_per_block=1,
-        transformer_layers_per_block=0,
+        transformer_layers_per_block=1,
+        encoder_hid_dim=encoder_hid_dim,
         only_cross_attention=True,
     )
 
@@ -262,21 +263,19 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    filtered_ds = th.zeros(len(training_ds), 100, 100, device=device)
+    filtered_ds = th.zeros(len(training_ds), design_shape[0], design_shape[1], device=device)
     for i in range(len(training_ds)):
-        filtered_ds[i] = transforms.Resize((100, 100))(
-            training_ds[i]["optimal_design"].reshape(1, design_shape[0], design_shape[1])
-        )
+        filtered_ds[i] = training_ds[i]["optimal_design"].reshape(1, design_shape[0], design_shape[1])
     filtered_ds_max = filtered_ds.max()
     filtered_ds_min = filtered_ds.min()
-    filtered_ds *= 2
-    filtered_ds -= 1
     filtered_ds_norm = (filtered_ds - filtered_ds_min) / (filtered_ds_max - filtered_ds_min)
     training_ds = th.utils.data.TensorDataset(
         filtered_ds_norm.flatten(1), *[training_ds[key] for key, _ in problem.conditions]
     )
-    vf_min = training_ds.tensors[1].min()
-    vf_max = training_ds.tensors[1].max()
+    cond_tensors = th.stack(training_ds.tensors[1:len(problem.conditions)+1])
+    conds_min = cond_tensors.amin(dim=tuple(range(1, cond_tensors.ndim)))
+    conds_max = cond_tensors.amax(dim=tuple(range(1, cond_tensors.ndim)))
+
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -325,10 +324,10 @@ if __name__ == "__main__":
         """Samples n_designs designs."""
         model.eval()
         with th.no_grad():
-            dims = (n_designs, 1, 100, 100)
+            dims = (n_designs, 1, design_shape[0], design_shape[1])
+            steps = th.linspace(0, 1, n_designs, device=device).view(n_designs, 1, 1)
+            encoder_hidden_states = conds_min + steps * (conds_max - conds_min)
             image = th.randn(dims, device=device)  # initial image
-            encoder_hidden_states = th.linspace(vf_min, vf_max, n_designs, device=device)
-            encoder_hidden_states = encoder_hidden_states.view(n_designs, 1, 1).expand(n_designs, 1, 32)
             for i in range(num_timesteps)[::-1]:
                 t = th.full((n_designs,), i, device=device, dtype=th.long)
 
@@ -343,14 +342,13 @@ if __name__ == "__main__":
         for i, data in enumerate(dataloader):
             # Zero the parameter gradients
             optimizer.zero_grad()
-            designs = data[0].reshape(-1, 1, 100, 100)
+            designs = data[0].reshape(-1, 1, design_shape[0], design_shape[1])
             x = designs.to(device)
-            conds = th.stack((data[1:]), dim=1).reshape(-1, 1, 1)
-            conds_ex = conds.expand(-1, 1, 32)
+            conds = th.stack((data[1:]), dim=1).reshape(-1, 1, encoder_hid_dim)
 
             current_batch_size = x.shape[0]
             t = th.randint(0, num_timesteps, (current_batch_size,), device=device).long()
-            encoder_hidden_states = conds_ex.to(device)
+            encoder_hidden_states = conds.to(device)
 
             # Get the noise and the noisy input
             x_noisy, noise = ddm_sampler.forward_diffusion_sample(x, t, device)
@@ -388,10 +386,12 @@ if __name__ == "__main__":
 
                     # Plot the image created by each output
                     for j, tensor in enumerate(designs):
-                        img = tensor.cpu().numpy().reshape(100, 100)  # Extract x and y coordinates
-                        do = hidden_states[j, 0, 0].cpu()
-                        axes[j].imshow(img.T)  # image plot
-                        axes[j].title.set_text(f"volfrac: {do:.2f}")  # Set title
+                        img = tensor.cpu().numpy()  # Extract x and y coordinates
+                        do = hidden_states[j, 0, :].cpu()
+                        axes[j].imshow(img[0])  # image plot
+                        title = [(problem.conditions[i][0], f"{do[i]:.2f}") for i in range(len(problem.conditions))]
+                        title_string = '\n '.join(f"{condition}: {value}" for condition, value in title) 
+                        axes[j].title.set_text(title_string)  # Set title
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 
