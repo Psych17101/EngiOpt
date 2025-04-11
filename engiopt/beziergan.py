@@ -64,6 +64,7 @@ class Args:
     sample_interval: int = 100
     """interval between image samples"""
 
+
 _EPS = 1e-7
 
 
@@ -105,35 +106,35 @@ class GAN:
         gan.optimizer_G.load_state_dict(ckp["optimizer_G"])
         return gan
 
-    def loss_g(self, batch:dict, noise_gen: Callable) -> th.Tensor:
+    def loss_g(self, batch: dict, noise_gen: Callable) -> th.Tensor:
         """Loss function for the generator."""
         fake = self.generator(noise_gen())
         return self.js_loss_g(batch, fake)
 
-    def loss_d(self, batch:dict, noise_gen: Callable) -> th.Tensor:
+    def loss_d(self, batch: dict, noise_gen: Callable) -> th.Tensor:
         """Loss function for the discriminator."""
         fake = self.generator(noise_gen())
         return self.js_loss_d(batch, fake)
 
-    def js_loss_d(self, real:dict, fake:tuple[th.Tensor, ...]) -> th.Tensor:
+    def js_loss_d(self, real: dict, fake: tuple[th.Tensor, ...]) -> th.Tensor:
         """Entropy loss for the discriminator."""
         return nn.functional.binary_cross_entropy_with_logits(
-            self.discriminator(real['optimal_design'], th.stack((real['cd_val'], real['cl_val']),1)),
-            th.ones(real['optimal_design'].shape[0], 1, device=real['optimal_design'].device)
+            self.discriminator(real['optimal_design'], th.stack((real['cd_val'], real['cl_val']), 1)),
+            th.ones(real['optimal_design'].shape[0], 1, device=real['optimal_design'].device),
         ) + nn.functional.binary_cross_entropy_with_logits(
-            self.discriminator(fake[0], fake[1][:,:,0]), th.zeros(len(fake[0]), 1, device=fake[0].device)
+            self.discriminator(fake[0], fake[1][:, :, 0]), th.zeros(len(fake[0]), 1, device=fake[0].device)
         )
 
-    def js_loss_g(self, real:dict, fake:tuple[th.Tensor, ...]) -> th.Tensor:
+    def js_loss_g(self, fake: tuple[th.Tensor, ...]) -> th.Tensor:
         """Entropy loss for the generator."""
         return nn.functional.binary_cross_entropy_with_logits(
-            self.discriminator(fake[0], fake[1][:,:,0]), th.ones(len(real['optimal_design']), 1, device=fake[0].device)
+            self.discriminator(fake[0], fake[1][:,:,0]), th.ones(len(fake[0]), 1, device=fake[0].device)
         )
 
-    def _train_gen_criterion(self)-> bool:
+    def _train_gen_criterion(self) -> bool:
         return True
 
-    def _update_d(self, num_iter_d: int, batch: dict, noise_gen: Callable, **kwargs: object)-> th.Tensor:
+    def _update_d(self, num_iter_d: int, batch: dict, noise_gen: Callable, **kwargs: object) -> th.Tensor:
         for _ in range(num_iter_d):
             self.optimizer_D.zero_grad()
             loss = self.loss_d(batch, noise_gen, **kwargs)
@@ -141,7 +142,7 @@ class GAN:
             self.optimizer_D.step()
         return loss
 
-    def _update_g(self, num_iter_g: int, batch:dict, noise_gen: Callable, **kwargs: object)-> th.Tensor:
+    def _update_g(self, num_iter_g: int, batch:dict, noise_gen: Callable, **kwargs: object) -> th.Tensor:
         for _ in range(num_iter_g):
             self.optimizer_G.zero_grad()
             loss = self.loss_g(batch, noise_gen, **kwargs)
@@ -151,6 +152,7 @@ class GAN:
 
     def prepare_batch_report(self, sample_interval: int, n_designs: int) -> Callable:
         """Creates a function for logging to wandb and plotting designs."""
+
         def batch_report(  # noqa: PLR0913
             batch_no: int, n_batches: int, epoch: int, n_epochs: int, d_loss: th.Tensor, g_loss: th.Tensor
         ) -> None:
@@ -197,9 +199,9 @@ class GAN:
 
         return batch_report
 
-
     def prepare_save(self, algo: str, seed: int) -> Callable:
         """Generates a function to save model checkpoints."""
+
         def save(batch_no: int, n_batches: int, epoch: int, gan: Callable, d_loss: th.Tensor, g_loss: th.Tensor) -> None:  # noqa: PLR0913
             batches_done = epoch * n_batches + batch_no
             ckpt_gen = {
@@ -246,8 +248,8 @@ class GAN:
                 if not self._train_gen_criterion():
                     continue
                 g_loss = self._update_g(num_iter_g, batch, noise_gen, **kwargs)
-                batch_report=self.prepare_batch_report(Args.sample_interval, n_designs)
-                save_model=self.prepare_save(Args.algo, Args.seed)
+                batch_report = self.prepare_batch_report(Args.sample_interval, n_designs)
+                save_model = self.prepare_save(Args.algo, Args.seed)
                 batch_report(i, len(dataloader), epoch, epochs, d_loss, g_loss)
                 save_model(i, len(dataloader), epoch, self, d_loss, g_loss, **kwargs)
 
@@ -273,7 +275,7 @@ class InfoGAN(GAN):
 
     def info_loss(self, fake: tuple[th.Tensor, ...], latent_code: float) -> th.Tensor:
         """Loss function for the InfoGAN."""
-        q = self.discriminator(fake[0], fake[1][:,:,0])
+        q = self.discriminator(fake[0], fake[1][:, :, 0])
         q_mean = q.mean()
         q_logstd = q.std().log()
         epsilon = (latent_code - q_mean) / (th.exp(q_logstd) + _EPS)
@@ -419,13 +421,13 @@ class MLP(nn.Module):
         - Output: `(N, H_out)` where H_out = out_features.
     """
 
-    def __init__(self, in_features: int, out_features: int, layer_width: tuple[int, ...], combo: LinearCombo=LinearCombo):
+    def __init__(self, in_features: int, out_features: int, layer_width: tuple[int, ...], combo: LinearCombo = LinearCombo):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.model = self._build_model(layer_width, combo)
 
-    def forward(self, input_: th.Tensor)-> th.Tensor:
+    def forward(self, input_: th.Tensor) -> th.Tensor:
         """Forward pass for the model."""
         return self.model(input_)
 
