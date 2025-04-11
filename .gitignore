@@ -159,3 +159,5 @@ images/*
 # Editors
 .idea/
 .vscode/
+
+*.pth
