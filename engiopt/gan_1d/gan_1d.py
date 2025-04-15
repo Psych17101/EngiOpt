@@ -25,7 +25,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "beams2d"
+    problem_id: str = "airfoil2d"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -43,9 +43,9 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 1000
+    n_epochs: int = 200
     """number of epochs of training"""
-    batch_size: int = 32
+    batch_size: int = 64
     """size of the batches"""
     lr: float = 3e-4
     """learning rate"""
@@ -62,11 +62,10 @@ class Args:
 
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim: int, design_shape: tuple):
+    def __init__(self):
         super().__init__()
-        self.design_shape = design_shape  # Store design shape
 
-        def block(in_feat: int, out_feat: int, *, normalize: bool = True) -> list:
+        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:  # noqa: FBT001, FBT002
             layers = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
@@ -74,7 +73,7 @@ class Generator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *block(latent_dim, 128, normalize=False),
+            *block(args.latent_dim, 128, normalize=False),
             *block(128, 256),
             *block(256, 512),
             *block(512, 1024),
@@ -82,11 +81,10 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z: th.Tensor) -> th.Tensor:
-        """Forward pass to generate an image from latent space."""
-        img = self.model(z)
-        img = img.view(img.size(0), *self.design_shape)
-        return img
+    def forward(self, z: th.Tensor) -> th.Tensor:  # noqa: D102
+        design = self.model(z)
+        design = design.view(design.size(0), *design_shape)
+        return design
 
 
 class Discriminator(nn.Module):
@@ -102,10 +100,9 @@ class Discriminator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, img: th.Tensor) -> th.Tensor:
-        """Forward pass to compute the validity of an input image."""
-        img_flat = img.view(img.size(0), -1)
-        validity = self.model(img_flat)
+    def forward(self, design: th.Tensor) -> th.Tensor:  # noqa: D102
+        design_flat = design.view(design.size(0), -1)
+        validity = self.model(design_flat)
 
         return validity
 
@@ -142,7 +139,7 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator(args.latent_dim, design_shape)
+    generator = Generator()
     discriminator = Discriminator()
 
     generator.to(device)
@@ -150,9 +147,8 @@ if __name__ == "__main__":
     adversarial_loss.to(device)
 
     # Configure data loader
-    training_ds = problem.dataset.with_format("torch", device=device)["train"]
-
-    training_ds = th.utils.data.TensorDataset(training_ds["optimal_design"].flatten(1))
+    training_ds = problem.dataset.with_format("torch", device=device)["train"]["optimized"]
+    print(training_ds.shape)
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -163,21 +159,11 @@ if __name__ == "__main__":
     optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
     optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
 
-    @th.no_grad()
-    def sample_designs(n_designs: int) -> th.Tensor:
-        """Samples n_designs from the generator."""
-        # Sample noise
-        z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
-        gen_imgs = generator(z)
-        return gen_imgs
-
     # ----------
     #  Training
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
-        for i, data in enumerate(dataloader):
-            designs = data[0]
-            print(designs.shape)
+        for i, designs in enumerate(dataloader):
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
             fake = th.zeros((designs.size(0), 1), requires_grad=False, device=device)
@@ -234,16 +220,18 @@ if __name__ == "__main__":
                 # This saves a grid image of 25 generated designs every sample_interval
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
-                    designs = sample_designs(25)
+                    tensors = gen_designs.data[:25]
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
                     # Flatten axes for easy indexing
                     axes = axes.flatten()
 
                     # Plot each tensor as a scatter plot
-                    for j, tensor in enumerate(designs):
-                        img = tensor.cpu().numpy()  # Extract x and y coordinates
-                        axes[j].imshow(img)  # Scatter plot
+                    for j, tensor in enumerate(tensors):
+                        x, y = tensor.cpu()  # Extract x and y coordinates
+                        axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
+                        axes[j].set_xlim(-0.1, 1.1)  # Adjust x-axis limits
+                        axes[j].set_ylim(-0.5, 0.5)  # Adjust y-axis limits
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 

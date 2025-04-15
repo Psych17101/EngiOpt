@@ -8,7 +8,6 @@ import os
 import random
 import time
 
-from diffusers import DDPMScheduler
 from diffusers import UNet2DConditionModel
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
@@ -17,6 +16,7 @@ import torch as th
 from torch.nn import functional
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -46,7 +46,7 @@ class Args:
     """number of epochs of training"""
     batch_size: int = 32
     """size of the batches"""
-    lr: float = 3e-4
+    lr: float = 4e-4
     """learning rate"""
     b1: float = 0.5
     """decay of first order momentum of gradient"""
@@ -58,6 +58,13 @@ class Args:
     """dimensionality of the latent space"""
     sample_interval: int = 400
     """interval between image samples"""
+
+    num_timesteps: int = 100
+    """Number of timesteps in the diffusion schedule"""
+    layers_per_block: int = 1
+    """Layers per U-NET block"""
+    noise_schedule: str = "linear"
+    """Diffusion schedule ('linear', 'cosine', 'exp')"""
 
 
 def beta_schedule(
@@ -251,7 +258,7 @@ if __name__ == "__main__":
         block_out_channels=(64, 128),
         down_block_types=("CrossAttnDownBlock2D", "DownBlock2D"),
         up_block_types=("UpBlock2D", "CrossAttnUpBlock2D"),
-        layers_per_block=1,
+        layers_per_block=args.layers_per_block,
         transformer_layers_per_block=1,
         encoder_hid_dim=encoder_hid_dim,
         only_cross_attention=True,
@@ -280,22 +287,21 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         shuffle=True,
     )
-    num_timesteps = 100
-    # Optimizer
-    noise_scheduler = DDPMScheduler(num_train_timesteps=num_timesteps, beta_schedule="linear")
+    num_timesteps = args.num_timesteps
 
     # Training loop
-
-    optimizer = th.optim.AdamW(model.parameters(), lr=4e-4)
+    optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)
 
     ## Schedule Parameters
     t = num_timesteps  # Number of timesteps
     start = 1e-4  # Starting variance
     end = 0.02  # Ending variance
+
     # Choose a schedule (if the following are False, then a linear schedule is used)
+
     options = {
-        "cosine": False,  # Use cosine schedule
-        "exp_biasing": False,  # Use exponential schedule
+        "cosine": args.noise_schedule == "cosine",  # Use cosine schedule
+        "exp_biasing": args.noise_schedule == "exp",  # Use exponential schedule
         "exp_bias_factor": 1,  # Exponential schedule factor (used if exp_biasing=True)
     }
     ##
@@ -307,16 +313,16 @@ if __name__ == "__main__":
 
     # Loss function
     def ddm_loss_fn(noise_pred: th.Tensor, noise: th.Tensor) -> th.Tensor:
-        """Compute the L1 loss between predicted and target noise.
+        """Compute the MSE loss between predicted and target noise.
 
         Args:
             noise_pred: The predicted noise tensor
             noise: The target noise tensor
 
         Returns:
-            The computed L1 loss between predictions and targets
+            The computed MSE loss between predictions and targets
         """
-        return functional.l1_loss(noise_pred, noise)
+        return functional.mse_loss(noise_pred, noise)
 
     @th.no_grad()
     def sample_designs(model: UNet2DConditionModel, n_designs: int = 25) -> tuple[th.Tensor, th.Tensor]:
@@ -412,13 +418,10 @@ if __name__ == "__main__":
                             "loss": loss.item(),
                         }
 
-                        th.save(ckpt_model, "diffusion_model.pth")
-                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
-                        artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
-                        artifact_disc.add_file("discriminator.pth")
+                        th.save(ckpt_model, "model.pth")
+                        artifact_model = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
+                        artifact_model.add_file("model.pth")
 
-                        wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
-                        wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
+                        wandb.log_artifact(artifact_model, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()
