@@ -1,4 +1,4 @@
-"""Evaluation for the GAN 2D."""
+"""Evaluation for the CGAN 2D w/ CNN."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import tyro
 
 from engiopt import metrics
 from engiopt.dataset_sample_conditions import sample_conditions
-from engiopt.gan_2d.gan_2d import Generator
+from engiopt.gan_cnn_2d.gan_cnn_2d import Generator
 import wandb
 
 
@@ -20,7 +20,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "heatconduction2d"
+    problem_id: str = "beams2d"
     """Problem identifier."""
     seed: int = 1
     """Random seed."""
@@ -56,13 +56,16 @@ if __name__ == "__main__":
         problem=problem, n_samples=args.n_samples, device=device, seed=args.seed
     )
 
+    # Reshape to match the expected input shape for the model
+    conditions_tensor = conditions_tensor.unsqueeze(-1).unsqueeze(-1)
+
     ### Set Up Generator ###
 
     # Restores the pytorch model from wandb
     if args.wandb_entity is not None:
-        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_gan_2d_generator:seed_{args.seed}"
+        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_gan_cnn_2d_generator:seed_{args.seed}"
     else:
-        artifact_path = f"{args.wandb_project}/{args.problem_id}_gan_2d_generator:seed_{args.seed}"
+        artifact_path = f"{args.wandb_project}/{args.problem_id}_gan_cnn_2d_generator:seed_{args.seed}"
 
     api = wandb.Api()
     artifact = api.artifact(artifact_path, type="model")
@@ -79,17 +82,20 @@ if __name__ == "__main__":
 
     ckpt_path = os.path.join(artifact_dir, "generator.pth")
     ckpt = th.load(ckpt_path)
-    model = Generator(latent_dim=run.config["latent_dim"], design_shape=problem.design_space.shape)
+    model = Generator(
+        latent_dim=run.config["latent_dim"], n_conds=len(problem.conditions), design_shape=problem.design_space.shape
+    )
     model.load_state_dict(ckpt["generator"])
     model.eval()  # Set to evaluation mode
     model.to(device)
 
     # Sample noise as generator input
-    z = th.randn((args.n_samples, run.config["latent_dim"]), device=device, dtype=th.float)
+    z = th.randn((args.n_samples, run.config["latent_dim"], 1, 1), device=device, dtype=th.float)
 
     # Generate a batch of designs
     gen_designs = model(z)
     gen_designs_np = gen_designs.detach().cpu().numpy()
+    gen_designs_np = gen_designs_np.reshape(args.n_samples, *problem.design_space.shape)
 
     # Clip to boundaries for running THIS IS PROBLEM DEPENDENT
     gen_designs_np = np.clip(gen_designs_np, 1e-3, 1)
