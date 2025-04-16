@@ -57,7 +57,7 @@ if __name__ == "__main__":
     )
 
     # Reshape to match the expected input shape for the model
-    conditions_tensor = conditions_tensor.squeeze(1).squeeze(1)
+    conditions_tensor = conditions_tensor.unsqueeze(-1).unsqueeze(-1)
 
     ### Set Up Generator ###
 

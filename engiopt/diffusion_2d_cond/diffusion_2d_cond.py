@@ -7,6 +7,7 @@ import math
 import os
 import random
 import time
+from typing import Literal
 
 from diffusers import UNet2DConditionModel
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
@@ -63,7 +64,7 @@ class Args:
     """Number of timesteps in the diffusion schedule"""
     layers_per_block: int = 1
     """Layers per U-NET block"""
-    noise_schedule: str = "linear"
+    noise_schedule: Literal["linear", "cosine", "exp"] = "linear"
     """Diffusion schedule ('linear', 'cosine', 'exp')"""
 
 
