@@ -12,10 +12,12 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from gymnasium import spaces
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
+from torchvision import transforms
 import tqdm
 import tyro
 
@@ -26,7 +28,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "airfoil"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -128,8 +130,14 @@ if __name__ == "__main__":
 
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
+    if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
+        raise ValueError("This algorithm only works with Box or Dict spaces.")  # noqa: TRY003
 
-    design_shape = problem.design_space.shape
+    if isinstance(problem.design_space, spaces.Box):
+        design_shape = problem.design_space.shape
+    else:
+        dummy_design, _ = problem.random_design()
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
     n_conds = len(problem.conditions)
 
     # Logging
@@ -166,8 +174,25 @@ if __name__ == "__main__":
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
 
+    if isinstance(problem.design_space, spaces.Box):
+        transform = transforms.Lambda(lambda x: x.flatten(1))
+    elif isinstance(problem.design_space, spaces.Dict):
+
+        def flatten_dict(x):  # noqa: ANN001, ANN201
+            """Convert each design in the batch to a flattened tensor."""
+            flattened = []
+            for design in x:
+                # Move to CPU for numpy conversion, then back to device
+                design_cpu = {k: v.cpu().numpy() if isinstance(v, th.Tensor) else v for k, v in design.items()}
+                flattened_array = spaces.flatten(problem.design_space, design_cpu)
+                flattened.append(th.tensor(flattened_array, device=device))
+            return th.stack(flattened)
+
+        transform = transforms.Lambda(flatten_dict)
+
     training_ds = th.utils.data.TensorDataset(
-        training_ds["optimal_design"].flatten(1), *[training_ds[key] for key in problem.conditions_keys]
+        transform(training_ds["optimal_design"]),
+        *[training_ds[key] for key in problem.conditions_keys],
     )
     dataloader = th.utils.data.DataLoader(
         training_ds,
