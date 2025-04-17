@@ -1,0 +1,139 @@
+"""Evaluation for the Diffusion 2d_cond."""
+
+from __future__ import annotations
+
+import dataclasses
+import os
+
+from diffusers import UNet2DConditionModel
+from engibench.utils.all_problems import BUILTIN_PROBLEMS
+import numpy as np
+import torch as th
+import tyro
+
+from engiopt import metrics
+from engiopt.dataset_sample_conditions import sample_conditions
+from engiopt.diffusion_2d_cond.diffusion_2d_cond import beta_schedule
+from engiopt.diffusion_2d_cond.diffusion_2d_cond import DiffusionSampler
+import wandb
+
+
+@dataclasses.dataclass
+class Args:
+    """Command-line arguments."""
+
+    problem_id: str = "beams2d"
+    """Problem identifier."""
+    seed: int = 1
+    """Random seed."""
+    wandb_project: str = "engiopt"
+    """Wandb project name."""
+    wandb_entity: str | None = None
+    """Wandb entity name."""
+    n_samples: int = 5
+    """Number of generated samples."""
+    sigma: float = 10
+    """Kernel bandwidth for mmd and dpp"""
+
+
+if __name__ == "__main__":
+    args = tyro.cli(Args)
+    problem = BUILTIN_PROBLEMS[args.problem_id]()
+    problem.reset(seed=args.seed)
+
+    # Seeding
+    th.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    th.backends.cudnn.deterministic = True
+
+    if th.backends.mps.is_available():
+        device = th.device("mps")
+    elif th.cuda.is_available():
+        device = th.device("cuda")
+    else:
+        device = th.device("cpu")
+
+    ### Set up testing conditions ###
+    conditions_tensor, sampled_conditions, sampled_designs_np, selected_indices = sample_conditions(
+        problem=problem, n_samples=args.n_samples, device=device, seed=args.seed
+    )
+    conditions_tensor = conditions_tensor.unsqueeze(1)  # Add channel dimension
+    ### Set Up Diffusion Model ###
+
+    # Restores the pytorch model from wandb
+    if args.wandb_entity is not None:
+        artifact_path = (
+            f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_diffusion_2d_cond_model:seed_{args.seed}"
+        )
+    else:
+        artifact_path = f"{args.wandb_project}/{args.problem_id}_diffusion_2d_cond_model:seed_{args.seed}"
+
+    api = wandb.Api()
+    artifact = api.artifact(artifact_path, type="model")
+
+    class RunRetrievalError(ValueError):
+        def __init__(self):
+            super().__init__("Failed to retrieve the run")
+
+    run = artifact.logged_by()
+    if run is None or not hasattr(run, "config"):
+        raise RunRetrievalError()
+    artifact_dir = artifact.download()
+
+    ckpt_path = os.path.join(artifact_dir, "model.pth")
+    ckpt = th.load(ckpt_path)
+
+    model = UNet2DConditionModel(
+        sample_size=problem.design_space.shape,
+        in_channels=1,
+        out_channels=1,
+        cross_attention_dim=64,
+        block_out_channels=(64, 128),
+        down_block_types=("CrossAttnDownBlock2D", "DownBlock2D"),
+        up_block_types=("UpBlock2D", "CrossAttnUpBlock2D"),
+        layers_per_block=run.config["layers_per_block"],
+        transformer_layers_per_block=1,
+        encoder_hid_dim=len(problem.conditions),
+        only_cross_attention=True,
+    )
+
+    model.to(device)
+
+    # Choose a variance schedule
+    options = {
+        "cosine": run.config["noise_schedule"] == "cosine",  # Use cosine schedule
+        "exp_biasing": run.config["noise_schedule"] == "exp",  # Use exponential schedule
+        "exp_bias_factor": 1,  # Exponential schedule factor (used if exp_biasing=True)
+    }
+
+    betas = beta_schedule(t=run.config["num_timesteps"], start=1e-4, end=0.02, scale=1.0, options=options)
+
+    ddm_sampler = DiffusionSampler(run.config["num_timesteps"], betas)
+
+    @th.no_grad()
+    def sample_designs(model: UNet2DConditionModel, n_designs: int = args.n_samples) -> tuple[th.Tensor, th.Tensor]:
+        """Samples n_designs designs."""
+        model.eval()
+        with th.no_grad():
+            dims = (n_designs, 1, problem.design_space.shape[0], problem.design_space.shape[1])
+            image = th.randn(dims, device=device)  # initial image
+            for i in range(run.config["num_timesteps"])[::-1]:
+                t = th.full((n_designs,), i, device=device, dtype=th.long)
+
+                image = ddm_sampler.sample_timestep(model, image, t, conditions_tensor)
+
+        return image
+
+    # Generate samples
+    gen_designs = sample_designs(model)
+    gen_designs = gen_designs.squeeze(1)  # Remove the channel dimension
+    gen_designs_np = gen_designs.detach().cpu().numpy()
+    gen_designs_np = gen_designs_np.reshape(args.n_samples, *problem.design_space.shape)
+
+    # Clip to boundaries for running THIS IS PROBLEM DEPENDENT
+    gen_designs_np = np.clip(gen_designs_np, 1e-3, 1)
+
+    # Compute metrics
+    metrics = metrics.metrics(problem, gen_designs_np, sampled_designs_np, sampled_conditions, sigma=args.sigma)
+
+    print(metrics)

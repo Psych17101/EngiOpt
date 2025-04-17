@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import os
 
-from dataset_sample_conditions import sample_conditions
 from denoising_diffusion_pytorch import GaussianDiffusion1D
 from denoising_diffusion_pytorch import Unet1D
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
@@ -14,6 +13,7 @@ import torch as th
 import tyro
 
 from engiopt import metrics
+from engiopt.dataset_sample_conditions import sample_conditions
 import wandb
 
 
@@ -67,7 +67,15 @@ if __name__ == "__main__":
 
     api = wandb.Api()
     artifact = api.artifact(artifact_path, type="model")
+
+    class RunRetrievalError(ValueError):
+        def __init__(self):
+            super().__init__("Failed to retrieve the run")
+
     run = artifact.logged_by()
+    if run is None or not hasattr(run, "config"):
+        raise RunRetrievalError()
+
     artifact_dir = artifact.download()
 
     ckpt_path = os.path.join(artifact_dir, "model.pth")
