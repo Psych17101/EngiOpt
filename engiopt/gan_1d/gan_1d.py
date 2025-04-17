@@ -20,6 +20,7 @@ from torchvision import transforms
 import tqdm
 import tyro
 
+from engiopt.transforms import flatten_dict_factory
 import wandb
 
 
@@ -161,18 +162,7 @@ if __name__ == "__main__":
     if isinstance(problem.design_space, spaces.Box):
         transform = transforms.Lambda(lambda x: x.flatten(1))
     elif isinstance(problem.design_space, spaces.Dict):
-
-        def flatten_dict(x):  # noqa: ANN001, ANN201
-            """Convert each design in the batch to a flattened tensor."""
-            flattened = []
-            for design in x:
-                # Move to CPU for numpy conversion, then back to device
-                design_cpu = {k: v.cpu().numpy() if isinstance(v, th.Tensor) else v for k, v in design.items()}
-                flattened_array = spaces.flatten(problem.design_space, design_cpu)
-                flattened.append(th.tensor(flattened_array, device=device))
-            return th.stack(flattened)
-
-        transform = transforms.Lambda(flatten_dict)
+        transform = flatten_dict_factory(problem, device)
 
     training_ds = th.utils.data.TensorDataset(transform(training_ds["optimal_design"]))
 

@@ -18,9 +18,9 @@ import numpy as np
 import torch as th
 from torch import nn
 import torch.nn.functional as f
-from torchvision import transforms
 import tyro
 
+from engiopt.transforms import flatten_dict_factory
 import wandb
 
 _EPS = 1e-7
@@ -416,17 +416,7 @@ if __name__ == "__main__":
 
     # We'll pull the real designs from the problem dataset.
     # If they are shape [N, 2, #points], that's good for this Discriminator
-    def flatten_dict(x):  # noqa: ANN001, ANN201
-        """Convert each design in the batch to a flattened tensor."""
-        flattened = []
-        for design in x:
-            # Move to CPU for numpy conversion, then back to device
-            design_cpu = {k: v.cpu().numpy() if isinstance(v, th.Tensor) else v for k, v in design.items()}
-            flattened_array = spaces.flatten(problem.design_space, design_cpu)
-            flattened.append(th.tensor(flattened_array, device=device))
-        return th.stack(flattened)
-
-    transform = transforms.Lambda(flatten_dict)
+    transform = flatten_dict_factory(problem, device)
 
     training_ds = problem.dataset.with_format("torch")["train"]
     training_ds = th.utils.data.TensorDataset(transform(training_ds["optimal_design"]))
