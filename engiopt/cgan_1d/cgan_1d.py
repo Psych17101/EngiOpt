@@ -293,16 +293,19 @@ if __name__ == "__main__":
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
                         if isinstance(problem.design_space, spaces.Dict):
-                            # TODO I'm not sure how to handle this "coords" in a problem-agnostic way
-                            design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())["coords"]
+                            design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
                         else:
                             design = tensor.cpu().numpy()
-                        x, y = design  # Extract x and y coordinates
                         dc = desired_conds[j].cpu()
-                        axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
+                        fig, ax = problem.render(design)
+                        # Instead of imshow, we need to copy the figure content to our subplot
+                        ax.figure.canvas.draw()
+                        img = np.array(fig.canvas.renderer.buffer_rgba())
+                        axes[j].imshow(img)
                         axes[j].title.set_text(f"m1: {dc[0]:.2f}, m2: {dc[1]:.2f}")
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
+                        plt.close(fig)  # Close the original figure to free memory
 
                     plt.tight_layout()
                     img_fname = f"images/{batches_done}.png"
