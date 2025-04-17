@@ -223,7 +223,6 @@ if __name__ == "__main__":
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
-            # THIS IS PROBLEM DEPENDENT
             designs = data[0]
 
             conds = th.stack((data[1:]), dim=1)

@@ -11,10 +11,12 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from gymnasium import spaces
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
+from torchvision import transforms
 import tqdm
 import tyro
 
@@ -113,7 +115,14 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
-    design_shape = problem.design_space.shape
+    if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
+        raise ValueError("This algorithm only works with Box or Dict spaces.")  # noqa: TRY003
+
+    if isinstance(problem.design_space, spaces.Box):
+        design_shape = problem.design_space.shape
+    else:
+        dummy_design, _ = problem.random_design()
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -147,8 +156,26 @@ if __name__ == "__main__":
     adversarial_loss.to(device)
 
     # Configure data loader
-    training_ds = problem.dataset.with_format("torch", device=device)["train"]["optimized"]
-    print(training_ds.shape)
+    training_ds = problem.dataset.with_format("torch", device=device)["train"]
+
+    if isinstance(problem.design_space, spaces.Box):
+        transform = transforms.Lambda(lambda x: x.flatten(1))
+    elif isinstance(problem.design_space, spaces.Dict):
+
+        def flatten_dict(x):  # noqa: ANN001, ANN201
+            """Convert each design in the batch to a flattened tensor."""
+            flattened = []
+            for design in x:
+                # Move to CPU for numpy conversion, then back to device
+                design_cpu = {k: v.cpu().numpy() if isinstance(v, th.Tensor) else v for k, v in design.items()}
+                flattened_array = spaces.flatten(problem.design_space, design_cpu)
+                flattened.append(th.tensor(flattened_array, device=device))
+            return th.stack(flattened)
+
+        transform = transforms.Lambda(flatten_dict)
+
+    training_ds = th.utils.data.TensorDataset(transform(training_ds["optimal_design"]))
+
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -163,7 +190,9 @@ if __name__ == "__main__":
     #  Training
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
-        for i, designs in enumerate(dataloader):
+        for i, data in enumerate(dataloader):
+            designs = data[0]
+
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
             fake = th.zeros((designs.size(0), 1), requires_grad=False, device=device)
@@ -228,12 +257,18 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(tensors):
-                        x, y = tensor.cpu()  # Extract x and y coordinates
-                        axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
-                        axes[j].set_xlim(-0.1, 1.1)  # Adjust x-axis limits
-                        axes[j].set_ylim(-0.5, 0.5)  # Adjust y-axis limits
+                        if isinstance(problem.design_space, spaces.Dict):
+                            design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
+                        else:
+                            design = tensor.cpu().numpy()
+                        fig, ax = problem.render(design)
+                        # Instead of imshow, we need to copy the figure content to our subplot
+                        ax.figure.canvas.draw()
+                        img = np.array(fig.canvas.renderer.buffer_rgba())
+                        axes[j].imshow(img)
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
+                        plt.close(fig)  # Close the original figure to free memory
 
                     plt.tight_layout()
                     img_fname = f"images/{batches_done}.png"
