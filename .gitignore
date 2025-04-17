@@ -159,3 +159,8 @@ images/*
 # Editors
 .idea/
 .vscode/
+
+*.pth
+
+.ruff_cache/
+.engibench_studies/

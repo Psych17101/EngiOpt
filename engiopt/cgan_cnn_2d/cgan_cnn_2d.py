@@ -280,7 +280,7 @@ if __name__ == "__main__":
     optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
 
     @th.no_grad()
-    def sample_designs(n_designs: int) -> th.Tensor:
+    def sample_designs(n_designs: int) -> tuple[th.Tensor, th.Tensor]:
         """Samples n_designs from the generator."""
         # Sample noise
         z = th.randn((n_designs, args.latent_dim, 1, 1), device=device, dtype=th.float)
