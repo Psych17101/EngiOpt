@@ -12,11 +12,13 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from gymnasium import spaces
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
 import torch.nn.functional as f
+from torchvision import transforms
 import tyro
 
 import wandb
@@ -28,7 +30,7 @@ _EPS = 1e-7
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "airfoil"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -390,6 +392,8 @@ if __name__ == "__main__":
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
+    if not isinstance(problem.design_space, spaces.Dict):
+        raise ValueError("This algorithm only works with Dict spaces (airfoil)")  # noqa: TRY003
     os.makedirs("images", exist_ok=True)
 
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
@@ -412,7 +416,25 @@ if __name__ == "__main__":
 
     # We'll pull the real designs from the problem dataset.
     # If they are shape [N, 2, #points], that's good for this Discriminator
-    training_ds = problem.dataset.with_format("torch")["train"]["optimal_design"]  # do not load everything onto GPU yet
+    def flatten_dict(x):  # noqa: ANN001, ANN201
+        """Convert each design in the batch to a flattened tensor."""
+        flattened = []
+        for design in x:
+            # Move to CPU for numpy conversion, then back to device
+            design_cpu = {k: v.cpu().numpy() if isinstance(v, th.Tensor) else v for k, v in design.items()}
+            flattened_array = spaces.flatten(problem.design_space, design_cpu)
+            flattened.append(th.tensor(flattened_array, device=device))
+        return th.stack(flattened)
+
+    transform = transforms.Lambda(flatten_dict)
+
+    training_ds = problem.dataset.with_format("torch")["train"]
+    training_ds = th.utils.data.TensorDataset(transform(training_ds["optimal_design"]))
+    dataloader = th.utils.data.DataLoader(
+        training_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+    )
     print("Dataset shape:", training_ds.shape)
 
     # We'll keep data on CPU. We'll move each batch to device in the loop
@@ -426,8 +448,8 @@ if __name__ == "__main__":
     bounds = (0.0, 1.0)
 
     for epoch in range(args.n_epochs):
-        for i, real_designs_cpu in enumerate(dataloader):
-            real_designs = real_designs_cpu.to(device)
+        for i, data in enumerate(dataloader):
+            real_designs = data[0]
 
             # ===== Step 1: D train real =====
             d_optimizer.zero_grad()
@@ -501,12 +523,17 @@ if __name__ == "__main__":
                 fig, axes = plt.subplots(5, 5, figsize=(12, 12), dpi=300)
                 axes = axes.flatten()
                 for j in range(25):
-                    x_plt, y_plt = dp_vis[j].cpu().numpy()  # [2, #points]
-                    axes[j].scatter(x_plt, y_plt, s=10, alpha=0.7)
-                    axes[j].set_xlim(-0.1, 1.1)
-                    axes[j].set_ylim(-0.5, 0.5)
-                    axes[j].set_xticks([])
-                    axes[j].set_yticks([])
+                    design = spaces.unflatten(problem.design_space, dp_vis[j].cpu().numpy())
+
+                    # use problem's render method to get the image
+                    fig, ax = problem.render(design)
+                    ax.figure.canvas.draw()
+                    img = np.array(fig.canvas.renderer.buffer_rgba())
+                    axes[j].imshow(img)
+                    axes[j].set_xticks([])  # Hide x ticks
+                    axes[j].set_yticks([])  # Hide y ticks
+                    plt.close(fig)  # Close the original figure to free memory
+
                 plt.tight_layout()
                 img_fname = f"images/{batches_done}.png"
                 plt.savefig(img_fname)

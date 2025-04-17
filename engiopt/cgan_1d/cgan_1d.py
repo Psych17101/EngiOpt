@@ -296,8 +296,8 @@ if __name__ == "__main__":
                         else:
                             design = tensor.cpu().numpy()
                         dc = desired_conds[j].cpu()
+                        # use problem's render method to get the image
                         fig, ax = problem.render(design)
-                        # Instead of imshow, we need to copy the figure content to our subplot
                         ax.figure.canvas.draw()
                         img = np.array(fig.canvas.renderer.buffer_rgba())
                         axes[j].imshow(img)

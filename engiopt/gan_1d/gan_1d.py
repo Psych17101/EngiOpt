@@ -261,8 +261,8 @@ if __name__ == "__main__":
                             design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
                         else:
                             design = tensor.cpu().numpy()
+                        # use problem's render method to get the image
                         fig, ax = problem.render(design)
-                        # Instead of imshow, we need to copy the figure content to our subplot
                         ax.figure.canvas.draw()
                         img = np.array(fig.canvas.renderer.buffer_rgba())
                         axes[j].imshow(img)
