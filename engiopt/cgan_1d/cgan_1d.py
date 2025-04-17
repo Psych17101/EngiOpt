@@ -215,8 +215,8 @@ if __name__ == "__main__":
         ]
 
         desired_conds = th.stack(linspaces, dim=1)
-        gen_imgs = generator(z, desired_conds)
-        return desired_conds, gen_imgs
+        gen_designs = generator(z, desired_conds)
+        return desired_conds, gen_designs
 
     # ----------
     #  Training
@@ -292,10 +292,15 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
-                        x, y = tensor.cpu().numpy()  # Extract x and y coordinates
-                        do = desired_conds[j].cpu()
+                        if isinstance(problem.design_space, spaces.Dict):
+                            # TODO I'm not sure how to handle this "coords" in a problem-agnostic way
+                            design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())["coords"]
+                        else:
+                            design = tensor.cpu().numpy()
+                        x, y = design  # Extract x and y coordinates
+                        dc = desired_conds[j].cpu()
                         axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
-                        axes[j].title.set_text(f"m1: {do[0]:.2f}, m2: {do[1]:.2f}")
+                        axes[j].title.set_text(f"m1: {dc[0]:.2f}, m2: {dc[1]:.2f}")
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 
