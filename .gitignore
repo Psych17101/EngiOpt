@@ -161,3 +161,6 @@ images/*
 .vscode/
 
 *.pth
+
+.ruff_cache/
+.engibench_studies/

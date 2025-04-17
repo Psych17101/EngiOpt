@@ -12,9 +12,9 @@ from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import numpy as np
 import torch as th
 import tyro
-import wandb
 
 from engiopt import metrics
+import wandb
 
 
 @dataclasses.dataclass

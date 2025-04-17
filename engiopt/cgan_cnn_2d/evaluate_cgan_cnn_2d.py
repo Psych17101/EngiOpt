@@ -10,10 +10,10 @@ from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import numpy as np
 import torch as th
 import tyro
-import wandb
 
 from engiopt import metrics
 from engiopt.cgan_cnn_2d import Generator
+import wandb
 
 
 @dataclasses.dataclass
