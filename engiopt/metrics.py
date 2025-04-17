@@ -96,7 +96,7 @@ def metrics(
     Args:
         problem: The optimization problem to evaluate.
         gen_designs (np.ndarray): Array of shape (n_samples, l, w) for generative model designs (potentially flattened for dict spaces).
-        dataset_designs (np.ndarray): Array of shape (n_samples, l, w) for dataset designs (potentially flattened for dict spaces).
+        dataset_designs (np.ndarray): Array of shape (n_samples, l, w) for dataset designs (these are not flattened).
         sampled_conditions (Dataset): Dataset of sampled conditions for optimization. If None, no conditions are used.
         sigma (float): Bandwidth parameter for the Gaussian kernel (in mmd and dpp calculation).
 
@@ -135,7 +135,14 @@ def metrics(
 
     # Compute the Maximum Mean Discrepancy (MMD) between generated and dataset designs
     # We compute the MMD on the flattened designs
-    mmd_value: float = mmd(gen_designs, dataset_designs, sigma=sigma)
+    flattened_ds_designs = []
+    for design in dataset_designs:
+        if isinstance(problem.design_space, spaces.Dict):
+            flattened_ds_designs.append(spaces.flatten(problem.design_space, design))
+        else:
+            flattened_ds_designs.append(design)
+    flattened_ds_designs = np.array(flattened_ds_designs)
+    mmd_value: float = mmd(gen_designs, flattened_ds_designs, sigma=sigma)
 
     # Compute the Determinantal Point Process (DPP) diversity for generated designs
     # We compute the DPP on the flattened designs
