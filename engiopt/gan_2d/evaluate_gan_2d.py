@@ -7,6 +7,7 @@ import os
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import numpy as np
+import pandas as pd
 import torch as th
 import tyro
 
@@ -20,81 +21,103 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "heatconduction2d"
+    problem_id: str = "beams2d"
     """Problem identifier."""
-    seed: int = 1
-    """Random seed."""
+    seed_start: int = 1
+    """Random starting seed."""
+    seed_range: int = 1
+    """Range of random seeds to run."""
     wandb_project: str = "engiopt"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
     n_samples: int = 5
-    """Number of generated samples."""
-    sigma: float = 10
-    """Kernel bandwidth for mmd and dpp"""
+    """Number of generated samples per seed."""
+    sigma: float = 10.0
+    """Kernel bandwidth for MMD and DPP metrics."""
 
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
-    problem = BUILTIN_PROBLEMS[args.problem_id]()
-    problem.reset(seed=args.seed)
 
-    # Seeding
-    th.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    th.backends.cudnn.deterministic = True
+    # DataFrame to collect metrics across seeds
+    results_df = pd.DataFrame()
 
-    if th.backends.mps.is_available():
-        device = th.device("mps")
-    elif th.cuda.is_available():
-        device = th.device("cuda")
-    else:
-        device = th.device("cpu")
+    for seed in range(args.seed_start, args.seed_start + args.seed_range):
+        # Initialize and reset problem
+        problem = BUILTIN_PROBLEMS[args.problem_id]()
+        problem.reset(seed=seed)
 
-    ### Set up testing conditions ###
-    conditions_tensor, sampled_conditions, sampled_designs_np, selected_indices = sample_conditions(
-        problem=problem, n_samples=args.n_samples, device=device, seed=args.seed
-    )
+        # Seeding for reproducibility
+        th.manual_seed(seed)
+        np.random.seed(seed)
+        th.backends.cudnn.deterministic = True
 
-    ### Set Up Generator ###
+        # Select device
+        if th.backends.mps.is_available():
+            device = th.device("mps")
+        elif th.cuda.is_available():
+            device = th.device("cuda")
+        else:
+            device = th.device("cpu")
 
-    # Restores the pytorch model from wandb
-    if args.wandb_entity is not None:
-        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_gan_2d_generator:seed_{args.seed}"
-    else:
-        artifact_path = f"{args.wandb_project}/{args.problem_id}_gan_2d_generator:seed_{args.seed}"
+        ### Set up testing conditions ###
+        conditions_tensor, sampled_conditions, sampled_designs_np, _ = sample_conditions(
+            problem=problem,
+            n_samples=args.n_samples,
+            device=device,
+            seed=seed,
+        )
 
-    api = wandb.Api()
-    artifact = api.artifact(artifact_path, type="model")
+        ### Set Up Generator ###
+        if args.wandb_entity is not None:
+            artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_gan_2d_generator:seed_{seed}"
+        else:
+            artifact_path = f"{args.wandb_project}/{args.problem_id}_gan_2d_generator:seed_{seed}"
 
-    class RunRetrievalError(ValueError):
-        def __init__(self):
-            super().__init__("Failed to retrieve the run")
+        api = wandb.Api()
+        artifact = api.artifact(artifact_path, type="model")
 
-    run = artifact.logged_by()
-    if run is None or not hasattr(run, "config"):
-        raise RunRetrievalError()
+        class RunRetrievalError(ValueError):
+            def __init__(self):
+                super().__init__("Failed to retrieve the run")
 
-    artifact_dir = artifact.download()
+        run = artifact.logged_by()
+        if run is None or not hasattr(run, "config"):
+            raise RunRetrievalError()
 
-    ckpt_path = os.path.join(artifact_dir, "generator.pth")
-    ckpt = th.load(ckpt_path)
-    model = Generator(latent_dim=run.config["latent_dim"], design_shape=problem.design_space.shape)
-    model.load_state_dict(ckpt["generator"])
-    model.eval()  # Set to evaluation mode
-    model.to(device)
+        artifact_dir = artifact.download()
+        ckpt_path = os.path.join(artifact_dir, "generator.pth")
+        ckpt = th.load(ckpt_path, map_location=device)
 
-    # Sample noise as generator input
-    z = th.randn((args.n_samples, run.config["latent_dim"]), device=device, dtype=th.float)
+        model = Generator(
+            latent_dim=run.config["latent_dim"],
+            design_shape=problem.design_space.shape,
+        ).to(device)
+        model.load_state_dict(ckpt["generator"])
+        model.eval()
 
-    # Generate a batch of designs
-    gen_designs = model(z)
-    gen_designs_np = gen_designs.detach().cpu().numpy()
+        # Sample noise and generate designs
+        z = th.randn((args.n_samples, run.config["latent_dim"]), device=device)
+        gen_designs = model(z)
+        gen_designs_np = gen_designs.detach().cpu().numpy()
+        gen_designs_np = np.clip(gen_designs_np, 1e-3, 1.0)
 
-    # Clip to boundaries for running THIS IS PROBLEM DEPENDENT
-    gen_designs_np = np.clip(gen_designs_np, 1e-3, 1)
+        # Compute metrics
+        metrics_dict = metrics.metrics(
+            problem,
+            gen_designs_np,
+            sampled_designs_np,
+            sampled_conditions,
+            sigma=args.sigma,
+        )
+        metrics_dict["seed"] = seed
 
-    # Compute metrics
-    metrics = metrics.metrics(problem, gen_designs_np, sampled_designs_np, sampled_conditions, sigma=args.sigma)
-
-    print(metrics)
+        # Append and save
+        results_df = pd.concat(
+            [results_df, pd.DataFrame([metrics_dict])],
+            ignore_index=True,
+        )
+        csv_path = f"gan_2d_{args.problem_id}_metrics.csv"
+        results_df.to_csv(csv_path, index=False)
+        print(f"Seed {seed} done; results saved to {csv_path}")
