@@ -9,6 +9,7 @@ from __future__ import annotations
 from datasets import Dataset
 from engibench import OptiStep
 from engibench.core import Problem
+from gymnasium import spaces
 import numpy as np
 
 
@@ -94,8 +95,8 @@ def metrics(
 
     Args:
         problem: The optimization problem to evaluate.
-        gen_designs (np.ndarray): Array of shape (n_samples, l, w) for generative model designs.
-        dataset_designs (np.ndarray): Array of shape (n_samples, l, w) for dataset designs.
+        gen_designs (np.ndarray): Array of shape (n_samples, l, w) for generative model designs (potentially flattened for dict spaces).
+        dataset_designs (np.ndarray): Array of shape (n_samples, l, w) for dataset designs (potentially flattened for dict spaces).
         sampled_conditions (Dataset): Dataset of sampled conditions for optimization. If None, no conditions are used.
         sigma (float): Bandwidth parameter for the Gaussian kernel (in mmd and dpp calculation).
 
@@ -114,8 +115,13 @@ def metrics(
     fog_list = []
     for i in range(n_samples):
         conditions = sampled_conditions[i] if sampled_conditions is not None else None
-        _, opt_history = problem.optimize(gen_designs[i], config=conditions)
-        reference_optimum = problem.simulate(dataset_designs[i], config=conditions)
+        if isinstance(problem.design_space, spaces.Dict):
+            # Need to unflatten the design to be used for optimization or simulation
+            unflattened_design = spaces.unflatten(problem.design_space, gen_designs[i])
+        else:
+            unflattened_design = gen_designs[i]
+        _, opt_history = problem.optimize(unflattened_design, config=conditions)
+        reference_optimum = problem.simulate(unflattened_design, config=conditions)
         opt_history_gaps = optimality_gap(opt_history, reference_optimum)
 
         iog_list.append(opt_history_gaps[0])
@@ -128,9 +134,11 @@ def metrics(
     average_fog: float = np.mean(fog_list)  # Average of final optimality gaps
 
     # Compute the Maximum Mean Discrepancy (MMD) between generated and dataset designs
+    # We compute the MMD on the flattened designs
     mmd_value: float = mmd(gen_designs, dataset_designs, sigma=sigma)
 
     # Compute the Determinantal Point Process (DPP) diversity for generated designs
+    # We compute the DPP on the flattened designs
     dpp_value: float = dpp_diversity(gen_designs, sigma=sigma)
 
     # Return all computed metrics as a dictionary
