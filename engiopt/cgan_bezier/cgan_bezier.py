@@ -18,7 +18,6 @@ import numpy as np
 import torch as th
 from torch import nn
 import torch.nn.functional as f
-from tqdm import tqdm
 import tyro
 
 import wandb
@@ -309,8 +308,8 @@ class Discriminator(nn.Module):
             nn.Dropout2d(dropout),
         )
 
-        # Second conv: kernel_size=(1,4), since now our height=1, width~=96
-        # We'll do stride=(1,2) again, so width will shrink further.
+        # Second conv: kernel_size=(1,4), since now height=1, width~=96
+        # stride=(1,2) again, so width will shrink further.
         self.conv2 = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)),
             nn.BatchNorm2d(128, momentum=momentum),
@@ -442,15 +441,14 @@ if __name__ == "__main__":
     bezier_control_pts = 40
     n_data_points = problem.design_space['coords'].shape[1]  # for airfoil, 192
 
-    # We'll pull the real designs from the problem dataset.
-    # If they are shape [N, 2, #points], that's good for this Discriminator
+    # The Discriminator uses shape [N, 2, #points].
     problem_dataset = problem.dataset.with_format("torch")["train"]
     design_scalar_keys = list(problem_dataset["optimal_design"][0].keys())
     design_scalar_keys.remove("coords")
-    coords_set = [problem_dataset[i]["optimal_design"]["coords"] for i in tqdm(range(len(problem_dataset)))]
+    coords_set = [problem_dataset[i]["optimal_design"]["coords"] for i in range(len(problem_dataset))]
     design_scalars = [
         example["optimal_design"][key]
-        for example in tqdm(problem_dataset)
+        for example in problem_dataset
         for key in design_scalar_keys
     ]
     training_ds = th.utils.data.TensorDataset(

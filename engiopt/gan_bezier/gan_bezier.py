@@ -28,7 +28,7 @@ _EPS = 1e-7
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "airfoil"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -66,6 +66,8 @@ class Args:
     """interval between image samples"""
     noise_dim: int = 6
     """latent code dimension for the Bezier GAN generator"""
+    bezier_control_pts: int = 40
+    """number of control points for the Bezier curve"""
 
 
 class MLP(nn.Module):
@@ -282,8 +284,8 @@ class Discriminator(nn.Module):
             nn.Dropout2d(dropout),
         )
 
-        # Second conv: kernel_size=(1,4), since now our height=1, width~=96
-        # We'll do stride=(1,2) again, so width will shrink further.
+        # Second conv: kernel_size=(1,4), since now height=1, width~=96
+        # stride=(1,2) again, so width will shrink further.
         self.conv2 = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)),
             nn.BatchNorm2d(128, momentum=momentum),
@@ -292,7 +294,7 @@ class Discriminator(nn.Module):
         )
 
         # Flatten and a small MLP head for D and Q:
-        # We'll guess the final shape. Let's measure with a dummy pass:
+        # Measure shape with a dummy pass:
         test_in = th.zeros(1, 1, 2, 192)
         out = self.conv1(test_in)
         out = self.conv2(out)
@@ -394,9 +396,8 @@ if __name__ == "__main__":
 
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
 
-    # Suppose we want 40 control points, and we know problem.design_space.shape[1] is #points
-    bezier_control_pts = 40
-    n_data_points = problem.design_space.shape[1]  # e.g. 128?
+    bezier_control_pts = args.bezier_control_pts
+    n_data_points = problem.design_space['coords'].shape[1]   # for airfoil, 192
 
     generator = Generator(
         latent_dim=args.latent_dim,
@@ -407,15 +408,18 @@ if __name__ == "__main__":
     ).to(device)
 
     # Discriminator: we pass the same latent_dim for the Q branch
-    # You can tweak kernel sizes, etc. inside the Discriminator if your data is bigger or smaller
     discriminator = Discriminator(latent_dim=args.latent_dim).to(device)
 
-    # We'll pull the real designs from the problem dataset.
-    # If they are shape [N, 2, #points], that's good for this Discriminator
-    training_ds = problem.dataset.with_format("torch")["train"]["optimal_design"]  # do not load everything onto GPU yet
-    print("Dataset shape:", training_ds.shape)
+    # The Discriminator uses shape [N, 2, #points].
+    problem_dataset = problem.dataset.with_format("torch")["train"]
+    design_scalar_keys = list(problem_dataset["optimal_design"][0].keys())
+    design_scalar_keys.remove("coords")
+    coords_set = [problem_dataset[i]["optimal_design"]["coords"] for i in range(len(problem_dataset))]
 
-    # We'll keep data on CPU. We'll move each batch to device in the loop
+    training_ds = th.utils.data.TensorDataset(
+        th.stack(coords_set),
+    )
+
     dataloader = th.utils.data.DataLoader(training_ds, batch_size=args.batch_size, shuffle=True)
 
     # Two separate Adam optimizers
@@ -427,7 +431,7 @@ if __name__ == "__main__":
 
     for epoch in range(args.n_epochs):
         for i, real_designs_cpu in enumerate(dataloader):
-            real_designs = real_designs_cpu.to(device)
+            real_designs = real_designs_cpu[0].to(device)
 
             # ===== Step 1: D train real =====
             d_optimizer.zero_grad()
