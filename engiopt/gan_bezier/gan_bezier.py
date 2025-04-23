@@ -418,13 +418,7 @@ if __name__ == "__main__":
     # If they are shape [N, 2, #points], that's good for this Discriminator
     transform = flatten_dict_factory(problem, device)
 
-    training_ds = problem.dataset.with_format("torch")["train"]
-    training_ds = th.utils.data.TensorDataset(transform(training_ds["optimal_design"]))
-    dataloader = th.utils.data.DataLoader(
-        training_ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-    )
+    training_ds = problem.dataset.with_format("torch")["train"]["optimal_design"]  # do not load everything onto GPU yet
     print("Dataset shape:", training_ds.shape)
 
     # We'll keep data on CPU. We'll move each batch to device in the loop
@@ -438,8 +432,8 @@ if __name__ == "__main__":
     bounds = (0.0, 1.0)
 
     for epoch in range(args.n_epochs):
-        for i, data in enumerate(dataloader):
-            real_designs = data[0]
+        for i, real_designs_cpu in enumerate(dataloader):
+            real_designs = real_designs_cpu.to(device)
 
             # ===== Step 1: D train real =====
             d_optimizer.zero_grad()
@@ -513,16 +507,12 @@ if __name__ == "__main__":
                 fig, axes = plt.subplots(5, 5, figsize=(12, 12), dpi=300)
                 axes = axes.flatten()
                 for j in range(25):
-                    design = spaces.unflatten(problem.design_space, dp_vis[j].cpu().numpy())
-
-                    # use problem's render method to get the image
-                    fig, ax = problem.render(design)
-                    ax.figure.canvas.draw()
-                    img = np.array(fig.canvas.renderer.buffer_rgba())
-                    axes[j].imshow(img)
-                    axes[j].set_xticks([])  # Hide x ticks
-                    axes[j].set_yticks([])  # Hide y ticks
-                    plt.close(fig)  # Close the original figure to free memory
+                    x_plt, y_plt = dp_vis[j].cpu().numpy()  # [2, #points]
+                    axes[j].scatter(x_plt, y_plt, s=10, alpha=0.7)
+                    axes[j].set_xlim(-0.1, 1.1)
+                    axes[j].set_ylim(-0.5, 0.5)
+                    axes[j].set_xticks([])
+                    axes[j].set_yticks([])
 
                 plt.tight_layout()
                 img_fname = f"images/{batches_done}.png"
