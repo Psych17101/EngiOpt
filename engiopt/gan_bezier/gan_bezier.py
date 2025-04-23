@@ -12,6 +12,7 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from gymnasium import spaces
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
@@ -28,7 +29,7 @@ _EPS = 1e-7
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "airfoil"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -390,6 +391,8 @@ if __name__ == "__main__":
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
+    if not isinstance(problem.design_space, spaces.Dict):
+        raise ValueError("This algorithm only works with Dict spaces (airfoil)")  # noqa: TRY003
     os.makedirs("images", exist_ok=True)
 
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
@@ -507,6 +510,7 @@ if __name__ == "__main__":
                     axes[j].set_ylim(-0.5, 0.5)
                     axes[j].set_xticks([])
                     axes[j].set_yticks([])
+
                 plt.tight_layout()
                 img_fname = f"images/{batches_done}.png"
                 plt.savefig(img_fname)

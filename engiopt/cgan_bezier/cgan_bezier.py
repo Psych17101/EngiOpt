@@ -23,9 +23,10 @@ import tyro
 import wandb
 
 _EPS = 1e-7
-MI_LAMBDA = 0.05            # 5 % of the weight the BCE gets
+MI_LAMBDA = 0.05  # 5 % of the weight the BCE gets
 R_LAMBDA_MAX = 10.0
 R_FADE_EPOCHS = 500
+
 
 @dataclass
 class Args:
@@ -258,7 +259,9 @@ class Generator(nn.Module):
         self.cpw_generator = CPWGenerator(total_in, n_control_points, dense_layers, deconv_channels)
         self.bezier_layer = BezierLayer(m_features, n_control_points, n_data_points, eps)
 
-    def forward(self, c: th.Tensor, z: th.Tensor, conds: th.Tensor) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
+    def forward(
+        self, c: th.Tensor, z: th.Tensor, conds: th.Tensor
+    ) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
         """Forward pass for the generator.
 
         :param c: [N, latent_dim]  (sampled from uniform in [bounds[0], bounds[1]])
@@ -286,14 +289,17 @@ class Generator(nn.Module):
 class Discriminator(nn.Module):
     """Bezier GAN discriminator."""
 
-    def __init__(self, latent_dim: int, # noqa: PLR0913
-                 design_scalars: int,
-                 num_conds: int,
-                 design_shape: tuple,
-                 conds_normalizer: Normalizer,
-                 design_scalars_normalizer: Normalizer,
-                 dropout: float = 0.4,
-                 momentum: float = 0.9):
+    def __init__(  # noqa: PLR0913
+        self,
+        latent_dim: int,
+        design_scalars: int,
+        num_conds: int,
+        design_shape: tuple,
+        conds_normalizer: Normalizer,
+        design_scalars_normalizer: Normalizer,
+        dropout: float = 0.4,
+        momentum: float = 0.9,
+    ):
         super().__init__()
         self.latent_dim = latent_dim
         self.conds_normalizer = conds_normalizer
@@ -325,7 +331,7 @@ class Discriminator(nn.Module):
         flat_dim = out.numel()
 
         self.post_conv_fc = nn.Sequential(
-            nn.Linear(flat_dim+design_scalars+num_conds, 256),
+            nn.Linear(flat_dim + design_scalars + num_conds, 256),
             nn.BatchNorm1d(256, momentum=momentum),
             nn.LeakyReLU(0.2, inplace=True),
         )
@@ -396,8 +402,10 @@ def compute_q_loss(q_mean: th.Tensor, q_logstd: th.Tensor, q_target: th.Tensor) 
     q_loss_elem = q_logstd + 0.5 * (epsilon**2)
     return q_loss_elem.mean()
 
+
 class Normalizer:
     """Normalizes or denormalizes the input tensor."""
+
     def __init__(self, min_val: th.Tensor, max_val: th.Tensor, eps: float = 1e-7):
         self.eps = eps
         self.min_val = min_val
@@ -406,14 +414,15 @@ class Normalizer:
     def normalize(self, x: th.Tensor) -> th.Tensor:
         """Normalizes the input tensor."""
         return (x - self.min_val) / (self.max_val - self.min_val + self.eps)
+
     def denormalize(self, x: th.Tensor) -> th.Tensor:
         """Denormalizes the input tensor."""
         return x * (self.max_val - self.min_val + self.eps) + self.min_val
 
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
     th.autograd.set_detect_anomaly(True)
-
 
     # Setup
     problem = BUILTIN_PROBLEMS[args.problem_id]()
@@ -464,12 +473,14 @@ if __name__ == "__main__":
         shuffle=True,
     )
 
-    discriminator = Discriminator(latent_dim=args.latent_dim,
-                                  design_scalars=1, num_conds=3,
-                                  design_shape=problem.design_space.shape,
-                                  conds_normalizer=conds_normalizer,
-                                  design_scalars_normalizer=design_scalars_normalizer,
-                                  ).to(device)
+    discriminator = Discriminator(
+        latent_dim=args.latent_dim,
+        design_scalars=1,
+        num_conds=3,
+        design_shape=problem.design_space.shape,
+        conds_normalizer=conds_normalizer,
+        design_scalars_normalizer=design_scalars_normalizer,
+    ).to(device)
 
     generator = Generator(
         latent_dim=args.latent_dim,
@@ -538,7 +549,7 @@ if __name__ == "__main__":
             x_fake2, cp2, w2, ub2, _, sf2 = generator(c2, z2, real_conds)
 
             logits_fake2, q_out2 = discriminator(x_fake2, real_conds, sf2)
-            g_loss_base = bce_with_logits(logits_fake2, th.ones_like(logits_fake2, device=device))*10
+            g_loss_base = bce_with_logits(logits_fake2, th.ones_like(logits_fake2, device=device)) * 10
             r_loss = compute_r_loss(cp2, w2)
             r_lambda = R_LAMBDA_MAX * min(1.0, epoch / R_FADE_EPOCHS)
 
@@ -586,7 +597,7 @@ if __name__ == "__main__":
                     axes[j].scatter(x_plt, y_plt, s=10, alpha=0.7)
                     axes[j].set_xlim(-0.1, 1.1)
                     axes[j].set_ylim(-0.5, 0.5)
-                    title = [(problem.conditions[i][0], f"{do1[i]:.2f}") for i in range(min(len(problem.conditions),4))]
+                    title = [(problem.conditions[i][0], f"{do1[i]:.2f}") for i in range(min(len(problem.conditions), 4))]
                     title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
                     axes[j].title.set_text(title_string)  # Set title
                     axes[j].set_xticks([])

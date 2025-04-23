@@ -26,7 +26,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "airfoil"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
