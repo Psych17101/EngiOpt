@@ -1,6 +1,7 @@
 # ruff: noqa: TRY003
 # ruff: noqa: TRY301
 # ruff: noqa: PLR0913
+# ruff: noqa: PLR0915
 
 
 """MLP model for tabular data training and evaluation.
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from dataclasses import field
 import os
 import random
+import sys
 import time
 from typing import Any, Literal
 
@@ -32,7 +34,11 @@ from torch.utils.data import DataLoader
 from training_utils import PlainTabularDataset
 from training_utils import train_one_model
 import tyro
+
 import wandb
+
+# Ensure the current directory is in the path (if needed for local imports).
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _parse_list_from_string(value: str, field_name: str) -> list:
@@ -90,7 +96,6 @@ class Args:
 
     # ---------------- DATA LOADING -----------------
     huggingface_repo: str = ""  # e.g., "IDEALLab/tabular_dataset_v0"
-    huggingface_split: str = "train"
     data_dir: str = "./data"
     data_input: str = "some_tabular_data.csv"
 
@@ -199,14 +204,15 @@ def get_device(args: Args) -> torch.device:
         raise ValueError(f"Invalid device: {args.device}")
 
 
-def load_data(args: Args) -> pd.DataFrame:
+def load_data(args: Args) -> dict[str, pd.DataFrame]:
     """Load tabular data from either HuggingFace or a local file.
 
     Args:
         args: Configuration arguments containing data source information.
 
     Returns:
-        pd.DataFrame: The loaded dataset as a pandas DataFrame.
+        dict[str, pd.DataFrame]: A dictionary containing the train/val/test splits as pandas DataFrames.
+            Keys are 'train', 'val', 'test'.
 
     Raises:
         FileNotFoundError: If the specified local data file doesn't exist.
@@ -215,20 +221,21 @@ def load_data(args: Args) -> pd.DataFrame:
     if args.huggingface_repo:
         from datasets import load_dataset
 
-        print(f"[INFO] Loading dataset from HuggingFace: {args.huggingface_repo} (split={args.huggingface_split})")
-        ds = load_dataset(args.huggingface_repo, split=args.huggingface_split)
-        return ds.to_pandas()
+        print(f"[INFO] Loading dataset from HuggingFace: {args.huggingface_repo}")
+        ds = load_dataset(args.huggingface_repo)
+        return {"train": ds["train"].to_pandas(), "val": ds["val"].to_pandas(), "test": ds["test"].to_pandas()}
     else:
         data_path = os.path.join(args.data_dir, args.data_input)
         if not os.path.isfile(data_path):
             raise FileNotFoundError(f"{data_path} does not exist")
         ext = os.path.splitext(data_path)[1].lower()
         if ext == ".csv":
-            return pd.read_csv(data_path)
+            df = pd.read_csv(data_path)
         elif ext == ".parquet":
-            return pd.read_parquet(data_path)
+            df = pd.read_parquet(data_path)
         else:
             raise ValueError("data_input must be CSV or Parquet")
+        return {"train": df}  # For local files, we'll do the split later
 
 
 def split_data(
@@ -394,7 +401,7 @@ def main(args: Args) -> float:
 
     This function orchestrates the entire process:
     1. Loads and preprocesses data
-    2. Splits data into train/val/test sets
+    2. Splits data into train/val/test sets (if not already split)
     3. Scales the data
     4. Trains an ensemble of models
     5. Evaluates the models on test data
@@ -420,30 +427,53 @@ def main(args: Args) -> float:
     device = get_device(args)
     print(f"[INFO] Using device: {device}")
 
-    df = load_data(args)
-    print("[INFO] DataFrame head:")
-    print(df.head())
+    # Load data (either pre-split from HuggingFace or single file)
+    data_splits = load_data(args)
 
-    preprocessor = DataPreprocessor(vars(args))
-    processed_dict, df = preprocessor.transform_inputs(df, fit_params=True)
-
-    if args.target_col not in df.columns:
-        raise ValueError(f"Missing target_col in DataFrame: {args.target_col}")
-    y_all = df[args.target_col].values
-
-    if args.params_cols:
-        for col in args.params_cols:
-            if col not in df.columns:
-                raise ValueError(f"Params column '{col}' not in df.columns.")
-        x_features_all = df[args.params_cols].values
+    if args.huggingface_repo:
+        # Data is already split
+        df_train = data_splits["train"]
+        df_val = data_splits["val"]
+        df_test = data_splits["test"]
     else:
-        x_features_all = processed_dict["X"]
+        # Need to split the data
+        df = data_splits["train"]
+        x_features_all = df[args.params_cols].values if args.params_cols else df.values
+        y_all = df[args.target_col].values
+        x_train, x_val, x_test, y_train, y_val, y_test = split_data(x_features_all, y_all, args)
+        df_train = pd.DataFrame(x_train, columns=args.params_cols)
+        df_train[args.target_col] = y_train
+        df_val = pd.DataFrame(x_val, columns=args.params_cols)
+        df_val[args.target_col] = y_val
+        df_test = pd.DataFrame(x_test, columns=args.params_cols)
+        df_test[args.target_col] = y_test
 
-    x_train, x_val, x_test, y_train, y_val, y_test = split_data(x_features_all, y_all, args)
+    # Preprocess each split
+    preprocessor = DataPreprocessor(vars(args))
+    processed_dict_train, df_train = preprocessor.transform_inputs(df_train, fit_params=True)
+    processed_dict_val, df_val = preprocessor.transform_inputs(df_val, fit_params=False)
+    processed_dict_test, df_test = preprocessor.transform_inputs(df_test, fit_params=False)
+
+    # Extract features and targets
+    if args.params_cols:
+        x_train = df_train[args.params_cols].values
+        x_val = df_val[args.params_cols].values
+        x_test = df_test[args.params_cols].values
+    else:
+        x_train = processed_dict_train["X"]
+        x_val = processed_dict_val["X"]
+        x_test = processed_dict_test["X"]
+
+    y_train = df_train[args.target_col].values
+    y_val = df_val[args.target_col].values
+    y_test = df_test[args.target_col].values
+
+    # Scale data
     x_train_s, x_val_s, x_test_s, y_train_s, y_val_s, y_test_s, custom_scalers = scale_data(
         x_train, x_val, x_test, y_train, y_val, y_test, args
     )
 
+    # Create datasets and dataloaders
     train_dataset = PlainTabularDataset(x_train_s, y_train_s)
     val_dataset = PlainTabularDataset(x_val_s, y_val_s)
     test_dataset = PlainTabularDataset(x_test_s, y_test_s)
@@ -452,6 +482,7 @@ def main(args: Args) -> float:
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
+    # Train ensemble
     ensemble_models, ensemble_val_losses, seeds = train_ensemble(args, train_loader, val_loader, device)
     best_model_idx = int(np.argmin(ensemble_val_losses))
     print(
@@ -459,6 +490,7 @@ def main(args: Args) -> float:
         f"val_loss={ensemble_val_losses[best_model_idx]:.4f}"
     )
 
+    # Save pipeline if requested
     pipeline_metadata = {"args": vars(args)}
     pipeline = ModelPipeline(
         models=ensemble_models,
@@ -478,6 +510,7 @@ def main(args: Args) -> float:
             wandb.log_artifact(artifact)
             print("[INFO] Uploaded model artifact to W&B.")
 
+    # Evaluate on test set if requested
     if args.test_model:
         evaluate_ensemble(args, ensemble_models, test_loader, device, custom_scalers)
 

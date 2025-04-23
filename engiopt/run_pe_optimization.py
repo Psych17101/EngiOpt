@@ -7,20 +7,19 @@ import argparse
 import os
 import sys
 
-import model_pipeline
-from model_pipeline import ModelPipeline
+# Ensure the current directory is in the path (if needed for local imports).
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 import numpy as np
 import pandas as pd
 from pymoo.core.mixed import MixedVariableGA
 from pymoo.operators.survival.rank_and_crowding import RankAndCrowding
 from pymoo.optimize import minimize
-import pymoo_pe_problem
-from pymoo_pe_problem import MyPowerElecProblem
 import torch
 
-# Set sys.modules for local module resolution
-sys.modules["model_pipeline"] = model_pipeline
-sys.modules["pymoo_pe_problem"] = pymoo_pe_problem
+from engiopt.model_pipeline import ModelPipeline
+from engiopt.pymoo_pe_problem import MyPowerElecProblem
 
 
 def main() -> None:
@@ -65,8 +64,8 @@ def main() -> None:
 
     # 1) Load your trained ensemble pipelines for r and g.
     # (Adjust the file paths to where your pipelines are saved.)
-    pipeline_r = ModelPipeline.load("my_models/final_pipeline_power_electronics_v0_1.csv__2025-03-26-11-03-52_tgt_r.pkl")
-    pipeline_g = ModelPipeline.load("my_models/final_pipeline_power_electronics_v0_1.csv__2025-03-26-10-44-11_tgt_g.pkl")
+    pipeline_r = ModelPipeline.load("my_models/final_pipeline_engiopt__mlp_tabular__18__1744568179_Voltage_Ripple.pkl")
+    pipeline_g = ModelPipeline.load("my_models/final_pipeline_engiopt__mlp_tabular__18__1744565887_DcGain.pkl")
 
     # 2) Create the pymoo problem instance with your pipelines.
     problem = MyPowerElecProblem(pipeline_r, pipeline_g, device=device)
@@ -106,10 +105,11 @@ def main() -> None:
     # For decision variables, convert each solution (which is a dict) to a row.
     # Here, we assume that res.X is an array of dicts.
     x_dicts = []
-    for sol in res.X:
-        # sol is a numpy structured array or dict; we convert it to a dict
-        sol_dict = {key: sol[key] for key in sol.dtype.names} if hasattr(sol, "dtype") else sol
-        x_dicts.append(sol_dict)
+    if res.X is not None:
+        for sol in res.X:
+            # sol is a numpy structured array or dict; we convert it to a dict
+            sol_dict = {key: sol[key] for key in sol.dtype.names} if hasattr(sol, "dtype") else sol
+            x_dicts.append(sol_dict)
 
     df_x = pd.DataFrame(x_dicts)
     df_x.to_csv("results/pareto_X.csv", index=False)
