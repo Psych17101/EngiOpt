@@ -11,13 +11,16 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from gymnasium import spaces
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
+from torchvision import transforms
 import tqdm
 import tyro
 
+from engiopt.transforms import flatten_dict_factory
 import wandb
 
 
@@ -25,7 +28,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "airfoil"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -113,7 +116,14 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
-    design_shape = problem.design_space.shape
+    if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
+        raise ValueError("This algorithm only works with Box or Dict spaces.")  # noqa: TRY003
+
+    if isinstance(problem.design_space, spaces.Box):
+        design_shape = problem.design_space.shape
+    else:
+        dummy_design, _ = problem.random_design()
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -147,8 +157,15 @@ if __name__ == "__main__":
     adversarial_loss.to(device)
 
     # Configure data loader
-    training_ds = problem.dataset.with_format("torch", device=device)["train"]["optimized"]
-    print(training_ds.shape)
+    training_ds = problem.dataset.with_format("torch", device=device)["train"]
+
+    if isinstance(problem.design_space, spaces.Box):
+        transform = transforms.Lambda(lambda x: x.flatten(1))
+    elif isinstance(problem.design_space, spaces.Dict):
+        transform = flatten_dict_factory(problem, device)
+
+    training_ds = th.utils.data.TensorDataset(transform(training_ds["optimal_design"]))
+
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -163,7 +180,9 @@ if __name__ == "__main__":
     #  Training
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
-        for i, designs in enumerate(dataloader):
+        for i, data in enumerate(dataloader):
+            designs = data[0]
+
             # Adversarial ground truths
             valid = th.ones((designs.size(0), 1), requires_grad=False, device=device)
             fake = th.zeros((designs.size(0), 1), requires_grad=False, device=device)
@@ -228,12 +247,18 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(tensors):
-                        x, y = tensor.cpu()  # Extract x and y coordinates
-                        axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
-                        axes[j].set_xlim(-0.1, 1.1)  # Adjust x-axis limits
-                        axes[j].set_ylim(-0.5, 0.5)  # Adjust y-axis limits
+                        if isinstance(problem.design_space, spaces.Dict):
+                            design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
+                        else:
+                            design = tensor.cpu().numpy()
+                        # use problem's render method to get the image
+                        fig, ax = problem.render(design)
+                        ax.figure.canvas.draw()
+                        img = np.array(fig.canvas.renderer.buffer_rgba())
+                        axes[j].imshow(img)
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
+                        plt.close(fig)  # Close the original figure to free memory
 
                     plt.tight_layout()
                     img_fname = f"images/{batches_done}.png"

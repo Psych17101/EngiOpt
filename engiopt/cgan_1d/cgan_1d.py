@@ -12,13 +12,16 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from gymnasium import spaces
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
+from torchvision import transforms
 import tqdm
 import tyro
 
+from engiopt.transforms import flatten_dict_factory
 import wandb
 
 
@@ -26,7 +29,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "airfoil"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -128,8 +131,14 @@ if __name__ == "__main__":
 
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
+    if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
+        raise ValueError("This algorithm only works with Box or Dict spaces.")  # noqa: TRY003
 
-    design_shape = problem.design_space.shape
+    if isinstance(problem.design_space, spaces.Box):
+        design_shape = problem.design_space.shape
+    else:
+        dummy_design, _ = problem.random_design()
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
     n_conds = len(problem.conditions)
 
     # Logging
@@ -166,8 +175,14 @@ if __name__ == "__main__":
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
 
+    if isinstance(problem.design_space, spaces.Box):
+        transform = transforms.Lambda(lambda x: x.flatten(1))
+    elif isinstance(problem.design_space, spaces.Dict):
+        transform = flatten_dict_factory(problem, device)
+
     training_ds = th.utils.data.TensorDataset(
-        training_ds["optimal_design"].flatten(1), *[training_ds[key] for key in problem.conditions_keys]
+        transform(training_ds["optimal_design"]),
+        *[training_ds[key] for key in problem.conditions_keys],
     )
     dataloader = th.utils.data.DataLoader(
         training_ds,
@@ -190,15 +205,14 @@ if __name__ == "__main__":
         ]
 
         desired_conds = th.stack(linspaces, dim=1)
-        gen_imgs = generator(z, desired_conds)
-        return desired_conds, gen_imgs
+        gen_designs = generator(z, desired_conds)
+        return desired_conds, gen_designs
 
     # ----------
     #  Training
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
-            # THIS IS PROBLEM DEPENDENT
             designs = data[0]
 
             conds = th.stack((data[1:]), dim=1)
@@ -267,12 +281,20 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
-                        x, y = tensor.cpu().numpy()  # Extract x and y coordinates
-                        do = desired_conds[j].cpu()
-                        axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
-                        axes[j].title.set_text(f"m1: {do[0]:.2f}, m2: {do[1]:.2f}")
+                        if isinstance(problem.design_space, spaces.Dict):
+                            design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
+                        else:
+                            design = tensor.cpu().numpy()
+                        dc = desired_conds[j].cpu()
+                        # use problem's render method to get the image
+                        fig, ax = problem.render(design)
+                        ax.figure.canvas.draw()
+                        img = np.array(fig.canvas.renderer.buffer_rgba())
+                        axes[j].imshow(img)
+                        axes[j].title.set_text(f"m1: {dc[0]:.2f}, m2: {dc[1]:.2f}")
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
+                        plt.close(fig)  # Close the original figure to free memory
 
                     plt.tight_layout()
                     img_fname = f"images/{batches_done}.png"
