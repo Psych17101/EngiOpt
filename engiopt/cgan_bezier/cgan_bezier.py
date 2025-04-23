@@ -32,7 +32,7 @@ R_FADE_EPOCHS = 500
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil2d"
+    problem_id: str = "airfoil"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -314,8 +314,8 @@ class Discriminator(nn.Module):
             nn.Dropout2d(dropout),
         )
 
-        # Second conv: kernel_size=(1,4), since now our height=1, width~=96
-        # We'll do stride=(1,2) again, so width will shrink further.
+        # Second conv: kernel_size=(1,4), since now height=1, width~=96
+        # stride=(1,2) again, so width will shrink further.
         self.conv2 = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=(1, 4), stride=(1, 2), padding=(0, 1)),
             nn.BatchNorm2d(128, momentum=momentum),
@@ -448,16 +448,24 @@ if __name__ == "__main__":
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
 
     bezier_control_pts = 40
-    n_data_points = problem.design_space.shape[1]  # for airfoil, 192
+    n_data_points = problem.design_space['coords'].shape[1]  # for airfoil, 192
 
-    # We'll pull the real designs from the problem dataset.
-    # If they are shape [N, 2, #points], that's good for this Discriminator
-    training_ds = problem.dataset.with_format("torch")["train"]
+    # The Discriminator uses shape [N, 2, #points].
+    problem_dataset = problem.dataset.with_format("torch")["train"]
+    design_scalar_keys = list(problem_dataset["optimal_design"][0].keys())
+    design_scalar_keys.remove("coords")
+    coords_set = [problem_dataset[i]["optimal_design"]["coords"] for i in range(len(problem_dataset))]
+    design_scalars = [
+        example["optimal_design"][key]
+        for example in problem_dataset
+        for key in design_scalar_keys
+    ]
     training_ds = th.utils.data.TensorDataset(
-        training_ds["optimal_design"], *[training_ds[key] for key, _ in problem.conditions]
+        th.stack(coords_set),
+        th.stack(design_scalars).unsqueeze(1),
+        *[problem_dataset[key] for key, _ in problem.conditions]
     )
 
-    rn_normalizer = training_ds.tensors[3].max()
     cond_tensors = th.stack(training_ds.tensors[2:])
     conds_min = cond_tensors.amin(dim=tuple(range(1, cond_tensors.ndim))).to(device)
     conds_max = cond_tensors.amax(dim=tuple(range(1, cond_tensors.ndim))).to(device)
@@ -473,19 +481,18 @@ if __name__ == "__main__":
         shuffle=True,
     )
 
-    discriminator = Discriminator(
-        latent_dim=args.latent_dim,
-        design_scalars=1,
-        num_conds=3,
-        design_shape=problem.design_space.shape,
-        conds_normalizer=conds_normalizer,
-        design_scalars_normalizer=design_scalars_normalizer,
-    ).to(device)
+    discriminator = Discriminator(latent_dim=args.latent_dim,
+                                  design_scalars=len(design_scalar_keys),
+                                  num_conds=len(problem.conditions),
+                                  design_shape=problem.design_space["coords"].shape,
+                                  conds_normalizer=conds_normalizer,
+                                  design_scalars_normalizer=design_scalars_normalizer,
+                                  ).to(device)
 
     generator = Generator(
         latent_dim=args.latent_dim,
         noise_dim=args.noise_dim,
-        num_conds=3,
+        num_conds=len(problem.conditions),
         n_control_points=bezier_control_pts,
         n_data_points=n_data_points,
         conds_normalizer=conds_normalizer,
@@ -515,7 +522,7 @@ if __name__ == "__main__":
     for epoch in range(args.n_epochs):
         for i, real_designs_cpu in enumerate(dataloader):
             real_designs = real_designs_cpu[0].to(device)
-            real_alpha = real_designs_cpu[1].unsqueeze(-1).to(device)
+            real_alpha = real_designs_cpu[1].to(device)
             real_conds = th.stack(real_designs_cpu[2:]).T.to(device)
 
             # ===== Step 1: D train real =====
