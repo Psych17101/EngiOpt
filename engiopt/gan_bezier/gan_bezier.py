@@ -20,7 +20,6 @@ from torch import nn
 import torch.nn.functional as f
 import tyro
 
-from engiopt.transforms import flatten_dict_factory
 import wandb
 
 _EPS = 1e-7
@@ -416,8 +415,6 @@ if __name__ == "__main__":
 
     # We'll pull the real designs from the problem dataset.
     # If they are shape [N, 2, #points], that's good for this Discriminator
-    transform = flatten_dict_factory(problem, device)
-
     training_ds = problem.dataset.with_format("torch")["train"]["optimal_design"]  # do not load everything onto GPU yet
     print("Dataset shape:", training_ds.shape)
 
