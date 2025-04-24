@@ -136,7 +136,7 @@ if __name__ == "__main__":
         design_shape = problem.design_space.shape
     else:
         dummy_design, _ = problem.random_design()
-        design_shape = spaces.flatten(problem.design_space, dummy_design).shape  # type: ignore #noqa: PGH003
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
     n_conds = len(problem.conditions)
 
     # Logging
@@ -287,7 +287,7 @@ if __name__ == "__main__":
                         # use problem's render method to get the image
                         fig, ax = problem.render(design)
                         ax.figure.canvas.draw()
-                        img = np.array(fig.canvas.renderer.buffer_rgba())  # type: ignore #noqa: PGH003
+                        img = np.array(fig.canvas.renderer.buffer_rgba())
                         axes[j].imshow(img)
                         axes[j].title.set_text(f"m1: {dc[0]:.2f}, m2: {dc[1]:.2f}")
                         axes[j].set_xticks([])  # Hide x ticks
