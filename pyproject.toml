@@ -130,6 +130,7 @@ ignore = [
   "T201",     # print
   "TRY003",     # print
 ]
+extend-select = ["I"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
@@ -254,6 +255,15 @@ exclude = [
 [[tool.mypy.overrides]]
 module = [
     "gymnasium",
+    "tyro",
+    "wandb",
+    "tqdm",
+    "torch",
+    "torch.*",
+    "engibench",
+    "engibench.*",
+    "denoising_diffusion_pytorch",
+    "diffusers",
     "scipy.*",
     "seaborn",
     "matplotlib",
