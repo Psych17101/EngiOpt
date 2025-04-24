@@ -65,7 +65,7 @@ class Args:
 
 
 class Generator(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_dim: int, design_shape: tuple[int, ...]):
         super().__init__()
 
         def block(in_feat: int, out_feat: int, normalize: bool = True) -> list[nn.Module]:  # noqa: FBT001, FBT002
@@ -76,7 +76,7 @@ class Generator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *block(args.latent_dim, 128, normalize=False),
+            *block(latent_dim, 128, normalize=False),
             *block(128, 256),
             *block(256, 512),
             *block(512, 1024),
@@ -86,8 +86,7 @@ class Generator(nn.Module):
 
     def forward(self, z: th.Tensor) -> th.Tensor:
         design = self.model(z)
-        design = design.view(design.size(0), *design_shape)
-        return design
+        return design.view(design.size(0), *design_shape)
 
 
 class Discriminator(nn.Module):
@@ -105,9 +104,7 @@ class Discriminator(nn.Module):
 
     def forward(self, design: th.Tensor) -> th.Tensor:
         design_flat = design.view(design.size(0), -1)
-        validity = self.model(design_flat)
-
-        return validity
+        return self.model(design_flat)
 
 
 if __name__ == "__main__":
@@ -117,13 +114,13 @@ if __name__ == "__main__":
     problem.reset(seed=args.seed)
 
     if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
-        raise ValueError("This algorithm only works with Box or Dict spaces.")  # noqa: TRY003
+        raise ValueError("This algorithm only works with Box or Dict spaces.")
 
     if isinstance(problem.design_space, spaces.Box):
         design_shape = problem.design_space.shape
     else:
         dummy_design, _ = problem.random_design()
-        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape  # type: ignore  # noqa: PGH003
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"

@@ -114,8 +114,7 @@ class Generator(nn.Module):
     def forward(self, z: th.Tensor) -> th.Tensor:  # (B, latent_dim, 1, 1)
         x = self.stem(z)  # (B, num_filters[0], 7, 7)
         x = self.up_blocks(x)  # (B, out_channels, 100, 100)
-        x = transforms.Resize(self.design_shape)(x)  # match ``design_shape``
-        return x
+        return transforms.Resize(self.design_shape)(x)  # match ``design_shape``
 
 
 class Discriminator(nn.Module):
@@ -221,8 +220,7 @@ if __name__ == "__main__":
         # Sample noise
         z = th.randn((n_designs, args.latent_dim, 1, 1), device=device, dtype=th.float)
 
-        gen_imgs = generator(z)
-        return gen_imgs
+        return generator(z)
 
     # ----------
     #  Training

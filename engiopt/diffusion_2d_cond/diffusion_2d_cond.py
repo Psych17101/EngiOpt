@@ -123,14 +123,19 @@ class DiffusionSampler:
         self.t = t
         self.betas = betas
         self.alphas = 1.0 - self.betas
-        self.alphas_cumprod = th.cumprod(self.alphas, axis=0)
+        self.alphas_cumprod = th.cumprod(self.alphas, dim=0)
         self.alphas_cumprod_prev = functional.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
         self.sqrt_recip_alphas = th.sqrt(1.0 / self.alphas)
         self.sqrt_alphas_cumprod = th.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = th.sqrt(1.0 - self.alphas_cumprod)
         self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
 
-    def forward_diffusion_sample(self, x_0: th.Tensor, t: th.Tensor, device: str = "cpu") -> tuple[th.Tensor, th.Tensor]:
+    def forward_diffusion_sample(
+        self,
+        x_0: th.Tensor,
+        t: th.Tensor,
+        device: th.device = th.device("cpu"),  # noqa: B008
+    ) -> tuple[th.Tensor, th.Tensor]:
         """Takes an image and a timestep as input and returns the noisy version of it.
 
         Returns the noisy version of the input image at the specified timestep.
@@ -145,7 +150,11 @@ class DiffusionSampler:
         ), noise.to(device)
 
     def forward_diffusion_sample_partial(
-        self, x_0: th.Tensor, t_current: th.Tensor, t_final: th.Tensor, device: str = "cpu"
+        self,
+        x_0: th.Tensor,
+        t_current: th.Tensor,
+        t_final: th.Tensor,
+        device: th.device = th.device("cpu"),  # noqa: B008
     ) -> tuple[th.Tensor, th.Tensor]:
         """Takes an image at a timestep and.
 
@@ -165,7 +174,11 @@ class DiffusionSampler:
         return x_0, noise.to(device)
 
     def diffusion_step_sample(
-        self, noise_pred: th.Tensor, x_noisy: th.Tensor, t: th.Tensor, device: str = "cpu"
+        self,
+        noise_pred: th.Tensor,
+        x_noisy: th.Tensor,
+        t: th.Tensor,
+        device: th.device = th.device("cpu"),  # noqa: B008
     ) -> th.Tensor:
         """Takes an image, noise and step; returns denoised image."""
         betas_t = get_index_from_list(self.betas, t, x_noisy.shape).to(device)

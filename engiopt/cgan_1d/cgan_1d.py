@@ -136,7 +136,7 @@ if __name__ == "__main__":
         design_shape = problem.design_space.shape
     else:
         dummy_design, _ = problem.random_design()
-        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape  # type: ignore  # noqa: PGH003
     n_conds = len(problem.conditions)
 
     # Logging

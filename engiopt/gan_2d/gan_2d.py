@@ -85,8 +85,7 @@ class Generator(nn.Module):
     def forward(self, z: th.Tensor) -> th.Tensor:
         """Forward pass to generate an image from latent space."""
         img = self.model(z)
-        img = img.view(img.size(0), *self.design_shape)
-        return img
+        return img.view(img.size(0), *self.design_shape)
 
 
 class Discriminator(nn.Module):
@@ -105,9 +104,7 @@ class Discriminator(nn.Module):
     def forward(self, img: th.Tensor) -> th.Tensor:
         """Forward pass to compute the validity of an input image."""
         img_flat = img.view(img.size(0), -1)
-        validity = self.model(img_flat)
-
-        return validity
+        return self.model(img_flat)
 
 
 if __name__ == "__main__":
@@ -125,7 +122,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
@@ -168,8 +165,7 @@ if __name__ == "__main__":
         """Samples n_designs from the generator."""
         # Sample noise
         z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
-        gen_imgs = generator(z)
-        return gen_imgs
+        return generator(z)
 
     # ----------
     #  Training

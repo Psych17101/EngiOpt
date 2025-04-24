@@ -81,7 +81,7 @@ if __name__ == "__main__":
 
         run = artifact.logged_by()
         if run is None or not hasattr(run, "config"):
-            raise RunRetrievalError()
+            raise RunRetrievalError
         artifact_dir = artifact.download()
 
         ckpt_path = os.path.join(artifact_dir, "generator.pth")

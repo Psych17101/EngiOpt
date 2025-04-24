@@ -6,11 +6,11 @@ Conditional bezier GAN based on https://github.com/IDEALLab/CEBGAN_JMD_2021 , ht
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 import os
 import random
 import time
+from typing import TYPE_CHECKING
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
@@ -21,6 +21,9 @@ import torch.nn.functional as f
 import tyro
 
 import wandb
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _EPS = 1e-7
 MI_LAMBDA = 0.05  # 5 % of the weight the BCE gets

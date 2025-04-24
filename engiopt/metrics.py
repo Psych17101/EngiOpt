@@ -12,9 +12,9 @@ from gymnasium import spaces
 import numpy as np
 
 if TYPE_CHECKING:
-    from engibench.core import Problem
-    from engibench import OptiStep
     from datasets import Dataset
+    from engibench import OptiStep
+    from engibench.core import Problem
 
 
 def mmd(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:

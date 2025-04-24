@@ -5,11 +5,11 @@ See https://arxiv.org/abs/1808.08871 for more details on this algorithm.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 import os
 import random
 import time
+from typing import TYPE_CHECKING
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 from gymnasium import spaces
@@ -21,6 +21,9 @@ import torch.nn.functional as f
 import tyro
 
 import wandb
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _EPS = 1e-7
 
@@ -360,8 +363,7 @@ def compute_r_loss(cp: th.Tensor, w: th.Tensor) -> th.Tensor:
     r_ends_loss = end_norm + penal
     r_ends_loss_mean = r_ends_loss.mean()
 
-    r_loss = r_w_loss + r_cp_loss + r_ends_loss_mean
-    return r_loss
+    return r_w_loss + r_cp_loss + r_ends_loss_mean
 
 
 def compute_q_loss(q_mean: th.Tensor, q_logstd: th.Tensor, q_target: th.Tensor) -> th.Tensor:
