@@ -8,11 +8,11 @@ description="A suite of benchmarks for automated engineering design."
 readme = "README.md"
 requires-python = ">= 3.9"
 authors = [{ name = "Florian Felten", email = "ffelten@mavt.ethz.ch" }]
-license = { text = "MIT License" }
-keywords = ["Mechanical Engineering", "AI", "Optimization"]
+license = { text = "GPL-3.0-or-later" }
+keywords = ["Mechanical Engineering", "Machine Learning", "AI", "Optimization"]
 classifiers = [
     "Development Status :: 4 - Beta",  # change to `5 - Production/Stable` when ready
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GPL-3.0-or-later",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -36,7 +36,6 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-# Update dependencies in `all` if any are added or removed
 all = [
     # All dependencies above
     # NOTE: No need to manually remove the duplicates, setuptools automatically does that.
@@ -45,10 +44,10 @@ all = [
 testing = ["pytest ==8.3.2"]
 
 [project.urls]
-Homepage = "TODO"
-Repository = "TODO"
-Documentation = "TODO"
-"Bug Report" = "TODO"
+Homepage = "https://ideal.ethz.ch"
+Repository = "https://github.com/IDEALLab/EngiOpt"
+Documentation = "https://engibench.ethz.ch"
+"Bug Report" = "https://github.com/IDEALLab/EngiOpt/issues"
 
 [tool.setuptools]
 include-package-data = true
