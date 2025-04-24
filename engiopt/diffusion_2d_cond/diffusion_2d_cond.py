@@ -62,7 +62,7 @@ class Args:
 
     num_timesteps: int = 100
     """Number of timesteps in the diffusion schedule"""
-    layers_per_block: int = 1
+    layers_per_block: int = 2
     """Layers per U-NET block"""
     noise_schedule: Literal["linear", "cosine", "exp"] = "linear"
     """Diffusion schedule ('linear', 'cosine', 'exp')"""
@@ -256,9 +256,9 @@ if __name__ == "__main__":
         in_channels=1,
         out_channels=1,
         cross_attention_dim=64,
-        block_out_channels=(64, 128),
-        down_block_types=("CrossAttnDownBlock2D", "DownBlock2D"),
-        up_block_types=("UpBlock2D", "CrossAttnUpBlock2D"),
+        block_out_channels=(32, 64, 128, 256),
+        down_block_types=("CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "DownBlock2D"),
+        up_block_types=('UpBlock2D', 'CrossAttnUpBlock2D', 'CrossAttnUpBlock2D', 'CrossAttnUpBlock2D'),
         layers_per_block=args.layers_per_block,
         transformer_layers_per_block=1,
         encoder_hid_dim=encoder_hid_dim,
@@ -346,6 +346,7 @@ if __name__ == "__main__":
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
+            batch_start_time = time.time()
             # Zero the parameter gradients
             optimizer.zero_grad()
             designs = data[0].reshape(-1, 1, design_shape[0], design_shape[1])
@@ -378,7 +379,7 @@ if __name__ == "__main__":
                         "batch": batches_done,
                     }
                 )
-                print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] [loss: {loss.item()}]]")
+                print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] [loss: {loss.item()}]] [{time.time() - batch_start_time:.2f} sec]")
 
                 # This saves a grid image of 25 generated designs every sample_interval
                 if batches_done % args.sample_interval == 0:
