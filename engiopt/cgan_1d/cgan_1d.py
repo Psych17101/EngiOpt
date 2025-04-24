@@ -66,12 +66,12 @@ class Args:
 
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim: int, n_conds: int, design_shape: tuple):
+    def __init__(self, latent_dim: int, n_conds: int, design_shape: tuple[int, ...]):
         super().__init__()
         self.design_shape = design_shape  # Store design shape
 
         def block(in_feat: int, out_feat: int, *, normalize: bool = True) -> list[nn.Module]:
-            layers = [nn.Linear(in_feat, out_feat)]
+            layers: list[nn.Module] = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
             layers.append(nn.LeakyReLU(0.2, inplace=True))
@@ -98,8 +98,7 @@ class Generator(nn.Module):
         """
         gen_input = th.cat((z, conds), -1)
         design = self.model(gen_input)
-        design = design.view(design.size(0), *self.design_shape)
-        return design
+        return design.view(design.size(0), *self.design_shape)
 
 
 class Discriminator(nn.Module):
@@ -119,11 +118,10 @@ class Discriminator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, design: th.Tensor, conds: th.Tensor) -> th.Tensor:  # noqa: D102
+    def forward(self, design: th.Tensor, conds: th.Tensor) -> th.Tensor:
         design_flat = design.view(design.size(0), -1)
         d_in = th.cat((design_flat, conds), -1)
-        validity = self.model(d_in)
-        return validity
+        return self.model(d_in)
 
 
 if __name__ == "__main__":
@@ -132,7 +130,7 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
     if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
-        raise ValueError("This algorithm only works with Box or Dict spaces.")  # noqa: TRY003
+        raise ValueError("This algorithm only works with Box or Dict spaces.")
 
     if isinstance(problem.design_space, spaces.Box):
         design_shape = problem.design_space.shape
@@ -148,7 +146,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 

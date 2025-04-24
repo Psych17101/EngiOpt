@@ -10,7 +10,7 @@ import torch as th
 def flatten_dict_factory(problem: Problem, device: th.device) -> Callable:
     """Factory function to create a flatten_dict function."""
 
-    def flatten_dict(x):  # noqa: ANN001, ANN202
+    def flatten_dict(x):
         """Convert each design in the batch to a flattened tensor."""
         flattened = []
         for design in x:

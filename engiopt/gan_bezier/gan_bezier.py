@@ -389,18 +389,18 @@ if __name__ == "__main__":
         )
 
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
     if not isinstance(problem.design_space, spaces.Dict):
-        raise ValueError("This algorithm only works with Dict spaces (airfoil)")  # noqa: TRY003
+        raise ValueError("This algorithm only works with Dict spaces (airfoil)")
     os.makedirs("images", exist_ok=True)
 
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
 
     bezier_control_pts = args.bezier_control_pts
-    n_data_points = problem.design_space['coords'].shape[1]   # for airfoil, 192
+    n_data_points = problem.design_space["coords"].shape[1]  # for airfoil, 192
 
     generator = Generator(
         latent_dim=args.latent_dim,

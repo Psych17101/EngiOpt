@@ -46,7 +46,7 @@ if __name__ == "__main__":
 
         # Seeding
         th.manual_seed(seed)
-        np.random.seed(seed)
+        rng = np.random.default_rng(seed)
         th.backends.cudnn.deterministic = True
 
         if th.backends.mps.is_available():

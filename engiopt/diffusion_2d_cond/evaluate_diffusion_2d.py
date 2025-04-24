@@ -52,7 +52,7 @@ if __name__ == "__main__":
 
         # Seeding for reproducibility
         th.manual_seed(seed)
-        np.random.seed(seed)
+        rng = np.random.default_rng(seed)
         th.backends.cudnn.deterministic = True
 
         # Select device

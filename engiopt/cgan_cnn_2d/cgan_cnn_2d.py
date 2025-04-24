@@ -159,7 +159,11 @@ class Discriminator(nn.Module):
     """
 
     def __init__(
-        self, n_conds: int, in_channels: int = 1, num_filters: list[int] = [32, 64, 128, 256], out_channels: int = 1
+        self,
+        n_conds: int,
+        in_channels: int = 1,
+        num_filters: list[int] = [32, 64, 128, 256],  # noqa: B006
+        out_channels: int = 1,
     ):
         super().__init__()
 
@@ -240,7 +244,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 

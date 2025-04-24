@@ -6,11 +6,15 @@ optimality gap calculations.
 
 from __future__ import annotations
 
-from datasets import Dataset
-from engibench import OptiStep
-from engibench.core import Problem
+from typing import TYPE_CHECKING
+
 from gymnasium import spaces
 import numpy as np
+
+if TYPE_CHECKING:
+    from engibench.core import Problem
+    from engibench import OptiStep
+    from datasets import Dataset
 
 
 def mmd(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
@@ -29,17 +33,17 @@ def mmd(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
         """Compute the Gaussian kernel between two samples."""
         return np.exp(-(np.linalg.norm(x - y) ** 2) / (2 * sigma**2))
 
-    n, length, w = x.shape
-    m, length, w = y.shape
+    n, _, _ = x.shape
+    m, _, _ = y.shape
 
     # Flatten the images to (n, length*w) and (m, length*w)
     x_flat = x.reshape(n, -1)
     y_flat = y.reshape(m, -1)
 
     # Compute pairwise kernel values
-    xx = np.mean([gaussian_kernel(x, x_, sigma) for x in x_flat for x_ in x_flat])
-    yy = np.mean([gaussian_kernel(y_, y__, sigma) for y_ in y_flat for y__ in y_flat])
-    xy = np.mean([gaussian_kernel(x, y_, sigma) for x in x_flat for y_ in y_flat])
+    xx: float = float(np.mean([gaussian_kernel(x, x_, sigma) for x in x_flat for x_ in x_flat]))
+    yy: float = float(np.mean([gaussian_kernel(y_, y__, sigma) for y_ in y_flat for y__ in y_flat]))
+    xy: float = float(np.mean([gaussian_kernel(x, y_, sigma) for x in x_flat for y_ in y_flat]))
 
     # Compute MMD
     return xx + yy - 2 * xy
@@ -66,9 +70,7 @@ def dpp_diversity(x: np.ndarray, sigma: float = 1.0) -> float:
     )
 
     # Compute the determinant of the similarity matrix
-    diversity = np.linalg.det(similarity_matrix + np.eye(n) * 1e-6)  # Add small value for numerical stability
-
-    return diversity
+    return np.linalg.det(similarity_matrix + np.eye(n) * 1e-6)  # Add small value for numerical stability
 
 
 def optimality_gap(opt_history: list[OptiStep], baseline: float) -> list[float]:

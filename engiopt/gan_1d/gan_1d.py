@@ -68,8 +68,8 @@ class Generator(nn.Module):
     def __init__(self):
         super().__init__()
 
-        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:  # noqa: FBT001, FBT002
-            layers = [nn.Linear(in_feat, out_feat)]
+        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list[nn.Module]:  # noqa: FBT001, FBT002
+            layers: list[nn.Module] = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
             layers.append(nn.LeakyReLU(0.2, inplace=True))
@@ -84,7 +84,7 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z: th.Tensor) -> th.Tensor:  # noqa: D102
+    def forward(self, z: th.Tensor) -> th.Tensor:
         design = self.model(z)
         design = design.view(design.size(0), *design_shape)
         return design
@@ -103,7 +103,7 @@ class Discriminator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, design: th.Tensor) -> th.Tensor:  # noqa: D102
+    def forward(self, design: th.Tensor) -> th.Tensor:
         design_flat = design.view(design.size(0), -1)
         validity = self.model(design_flat)
 
@@ -132,7 +132,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 

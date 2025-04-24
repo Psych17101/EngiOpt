@@ -66,8 +66,8 @@ class Generator(nn.Module):
         super().__init__()
         self.design_shape = design_shape  # Store design shape
 
-        def block(in_feat: int, out_feat: int, *, normalize: bool = True) -> list:
-            layers = [nn.Linear(in_feat, out_feat)]
+        def block(in_feat: int, out_feat: int, *, normalize: bool = True) -> list[nn.Module]:
+            layers: list[nn.Module] = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
             layers.append(nn.LeakyReLU(0.2, inplace=True))

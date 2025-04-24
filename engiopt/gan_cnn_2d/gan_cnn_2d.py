@@ -111,7 +111,7 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z: th.Tensor) -> th.Tensor:  # (B, latent_dim, 1, 1)  # noqa: D102
+    def forward(self, z: th.Tensor) -> th.Tensor:  # (B, latent_dim, 1, 1)
         x = self.stem(z)  # (B, num_filters[0], 7, 7)
         x = self.up_blocks(x)  # (B, out_channels, 100, 100)
         x = transforms.Resize(self.design_shape)(x)  # match ``design_shape``
@@ -158,7 +158,7 @@ class Discriminator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, x: th.Tensor) -> th.Tensor:  # noqa: D102
+    def forward(self, x: th.Tensor) -> th.Tensor:
         x = transforms.Resize((100, 100))(x)  # ensure input resolution
         return self.main(x)  # (B, out_channels, 1, 1)
 
@@ -178,7 +178,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 

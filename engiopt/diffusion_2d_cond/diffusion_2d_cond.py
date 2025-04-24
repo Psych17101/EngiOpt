@@ -234,7 +234,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
