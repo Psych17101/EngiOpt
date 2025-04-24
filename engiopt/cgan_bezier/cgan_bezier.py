@@ -19,7 +19,6 @@ import torch as th
 from torch import nn
 import torch.nn.functional as f
 import tyro
-
 import wandb
 
 if TYPE_CHECKING:
@@ -95,7 +94,7 @@ class MLP(nn.Module):
         activation_block: Callable,
         alpha: float,
     ) -> nn.Sequential:
-        layers = []
+        layers: list[nn.Module] = []
         in_sizes = (self.in_features, *layer_width)
         out_sizes = (*layer_width, self.out_features)
         for idx, (in_f, out_f) in enumerate(zip(in_sizes, out_sizes)):

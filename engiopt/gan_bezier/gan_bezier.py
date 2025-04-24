@@ -19,7 +19,6 @@ import torch as th
 from torch import nn
 import torch.nn.functional as f
 import tyro
-
 import wandb
 
 if TYPE_CHECKING:
@@ -94,7 +93,7 @@ class MLP(nn.Module):
         activation_block: Callable,
         alpha: float,
     ) -> nn.Sequential:
-        layers = []
+        layers: list[nn.Linear | nn.BatchNorm1d | nn.LeakyReLU] = []
         in_sizes = (self.in_features, *layer_width)
         out_sizes = (*layer_width, self.out_features)
         for idx, (in_f, out_f) in enumerate(zip(in_sizes, out_sizes)):
@@ -150,6 +149,8 @@ class CPWGenerator(nn.Module):
         self.w_gen = nn.Sequential(nn.Conv1d(deconv_channels[-1], 1, 1), nn.Sigmoid())
 
     def _calculate_parameters(self, n_control_points: int, channels: tuple[int, ...]) -> tuple[int, int]:
+        if not channels:
+            raise ValueError("channels tuple must not be empty")
         n_l = len(channels) - 1
         in_chnl = channels[0]
         in_width = n_control_points // (2**n_l)
@@ -395,14 +396,19 @@ if __name__ == "__main__":
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
-    if not isinstance(problem.design_space, spaces.Dict):
-        raise ValueError("This algorithm only works with Dict spaces (airfoil)")
-    os.makedirs("images", exist_ok=True)
+    if (
+        not isinstance(problem.design_space, spaces.Dict)
+        or "coords" not in problem.design_space
+        or "angle_of_attack" not in problem.design_space
+    ):
+        raise ValueError("Design space must be a Dict space with 'coords' and 'angle_of_attack' keys")
 
+    os.makedirs("images", exist_ok=True)
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
 
     bezier_control_pts = args.bezier_control_pts
-    n_data_points = problem.design_space["coords"].shape[1]  # for airfoil, 192
+    coords_space: spaces.Box = problem.design_space["coords"]  # type: ignore #noqa: PGH003
+    n_data_points = coords_space.shape[1]
 
     generator = Generator(
         latent_dim=args.latent_dim,

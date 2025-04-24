@@ -19,9 +19,9 @@ from torch import nn
 from torchvision import transforms
 import tqdm
 import tyro
+import wandb
 
 from engiopt.transforms import flatten_dict_factory
-import wandb
 
 
 @dataclass
@@ -90,7 +90,7 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, design_shape: tuple[int, ...]):
         super().__init__()
 
         self.model = nn.Sequential(
@@ -120,7 +120,7 @@ if __name__ == "__main__":
         design_shape = problem.design_space.shape
     else:
         dummy_design, _ = problem.random_design()
-        design_shape = spaces.flatten(problem.design_space, dummy_design).shape  # type: ignore  # noqa: PGH003
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape  # type: ignore #noqa: PGH003
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -146,8 +146,8 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator()
-    discriminator = Discriminator()
+    generator = Generator(latent_dim=args.latent_dim, design_shape=design_shape)
+    discriminator = Discriminator(design_shape=design_shape)
 
     generator.to(device)
     discriminator.to(device)
@@ -251,7 +251,7 @@ if __name__ == "__main__":
                         # use problem's render method to get the image
                         fig, ax = problem.render(design)
                         ax.figure.canvas.draw()
-                        img = np.array(fig.canvas.renderer.buffer_rgba())
+                        img = np.array(fig.canvas.renderer.buffer_rgba())  # type: ignore #noqa: PGH003
                         axes[j].imshow(img)
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks

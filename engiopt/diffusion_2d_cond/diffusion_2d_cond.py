@@ -7,7 +7,7 @@ import math
 import os
 import random
 import time
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 from diffusers import UNet2DConditionModel
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
@@ -17,8 +17,10 @@ import torch as th
 from torch.nn import functional
 import tqdm
 import tyro
-
 import wandb
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass
@@ -83,13 +85,13 @@ def beta_schedule(
         exp_biasing: Whether to use exponential biasing
         exp_bias_factor: Exponential biasing factor
     """
-    beta = th.linspace(scale * start, scale * end, t)
+    beta: th.Tensor = th.linspace(scale * start, scale * end, t)
     cosine = options.get("cosine", False) if options else False
     exp_biasing = options.get("exp_biasing", False) if options else False
     exp_bias_factor = options.get("exp_bias_factor", 1) if options else 1
 
     if cosine:
-        beta = []
+        beta_list: list[float] = []
 
         def a_func(t_val: float) -> float:
             return math.cos((t_val + 0.008) / 1.008 * np.pi / 2) ** 2
@@ -97,9 +99,9 @@ def beta_schedule(
         for i in range(t):
             t1 = i / t
             t2 = (i + 1) / t
-            beta.append(min(1 - a_func(t2) / a_func(t1), 0.999))
+            beta_list.append(min(1 - a_func(t2) / a_func(t1), 0.999))
 
-        beta = th.tensor(beta)
+        beta = th.tensor(beta_list)
 
     if exp_biasing:
         beta = (th.flip(th.exp(-exp_bias_factor * th.linspace(0, 1, t)), dims=[0])) * beta
@@ -192,7 +194,7 @@ class DiffusionSampler:
         # mean + variance
         return (model_mean + th.sqrt(posterior_variance_t) * noise_pred).to(device)
 
-    def lossfn_builder(self) -> callable:
+    def lossfn_builder(self) -> Callable[[th.Tensor, th.Tensor], th.Tensor]:
         """Returns the loss function for the diffusion model."""
 
         def lossfn(noise_pred: th.Tensor, noise: th.Tensor) -> th.Tensor:
@@ -307,7 +309,6 @@ if __name__ == "__main__":
     optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)
 
     ## Schedule Parameters
-    t = num_timesteps  # Number of timesteps
     start = 1e-4  # Starting variance
     end = 0.02  # Ending variance
 
@@ -321,9 +322,9 @@ if __name__ == "__main__":
     ##
 
     # Choose a variance schedule
-    betas = beta_schedule(t=t, start=start, end=end, scale=1.0, options=options)
+    betas = beta_schedule(t=num_timesteps, start=start, end=end, scale=1.0, options=options)
 
-    ddm_sampler = DiffusionSampler(t, betas)
+    ddm_sampler = DiffusionSampler(num_timesteps, betas)
 
     # Loss function
     def ddm_loss_fn(noise_pred: th.Tensor, noise: th.Tensor) -> th.Tensor:

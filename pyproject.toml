@@ -251,6 +251,7 @@ exclude = [
   ".*/templates/.*",
   "^engibench_studies/problems/airfoil/study_[^/]*/",
   "^docs/",
+  "^wandb/",
 ]
 [[tool.mypy.overrides]]
 module = [
@@ -260,6 +261,7 @@ module = [
     "tqdm",
     "torch",
     "torch.*",
+    "torchvision",
     "engibench",
     "engibench.*",
     "denoising_diffusion_pytorch",
