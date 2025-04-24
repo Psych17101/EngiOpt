@@ -6,11 +6,11 @@ Conditional bezier GAN based on https://github.com/IDEALLab/CEBGAN_JMD_2021 , ht
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 import os
 import random
 import time
+from typing import TYPE_CHECKING
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
@@ -19,8 +19,10 @@ import torch as th
 from torch import nn
 import torch.nn.functional as f
 import tyro
-
 import wandb
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _EPS = 1e-7
 MI_LAMBDA = 0.05  # 5 % of the weight the BCE gets
@@ -92,7 +94,7 @@ class MLP(nn.Module):
         activation_block: Callable,
         alpha: float,
     ) -> nn.Sequential:
-        layers = []
+        layers: list[nn.Module] = []
         in_sizes = (self.in_features, *layer_width)
         out_sizes = (*layer_width, self.out_features)
         for idx, (in_f, out_f) in enumerate(zip(in_sizes, out_sizes)):
@@ -392,8 +394,7 @@ def compute_r_loss(cp: th.Tensor, w: th.Tensor) -> th.Tensor:
     r_ends_loss = end_norm + penal
     r_ends_loss_mean = r_ends_loss.mean()
 
-    r_loss = r_w_loss + r_cp_loss + r_ends_loss_mean
-    return r_loss
+    return r_w_loss + r_cp_loss + r_ends_loss_mean
 
 
 def compute_q_loss(q_mean: th.Tensor, q_logstd: th.Tensor, q_target: th.Tensor) -> th.Tensor:
@@ -439,7 +440,7 @@ if __name__ == "__main__":
         )
 
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
@@ -448,22 +449,18 @@ if __name__ == "__main__":
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
 
     bezier_control_pts = 40
-    n_data_points = problem.design_space['coords'].shape[1]  # for airfoil, 192
+    n_data_points = problem.design_space["coords"].shape[1]  # for airfoil, 192
 
     # The Discriminator uses shape [N, 2, #points].
     problem_dataset = problem.dataset.with_format("torch")["train"]
     design_scalar_keys = list(problem_dataset["optimal_design"][0].keys())
     design_scalar_keys.remove("coords")
     coords_set = [problem_dataset[i]["optimal_design"]["coords"] for i in range(len(problem_dataset))]
-    design_scalars = [
-        example["optimal_design"][key]
-        for example in problem_dataset
-        for key in design_scalar_keys
-    ]
+    design_scalars = [example["optimal_design"][key] for example in problem_dataset for key in design_scalar_keys]
     training_ds = th.utils.data.TensorDataset(
         th.stack(coords_set),
         th.stack(design_scalars).unsqueeze(1),
-        *[problem_dataset[key] for key, _ in problem.conditions]
+        *[problem_dataset[key] for key, _ in problem.conditions],
     )
 
     cond_tensors = th.stack(training_ds.tensors[2:])
@@ -481,13 +478,14 @@ if __name__ == "__main__":
         shuffle=True,
     )
 
-    discriminator = Discriminator(latent_dim=args.latent_dim,
-                                  design_scalars=len(design_scalar_keys),
-                                  num_conds=len(problem.conditions),
-                                  design_shape=problem.design_space["coords"].shape,
-                                  conds_normalizer=conds_normalizer,
-                                  design_scalars_normalizer=design_scalars_normalizer,
-                                  ).to(device)
+    discriminator = Discriminator(
+        latent_dim=args.latent_dim,
+        design_scalars=len(design_scalar_keys),
+        num_conds=len(problem.conditions),
+        design_shape=problem.design_space["coords"].shape,
+        conds_normalizer=conds_normalizer,
+        design_scalars_normalizer=design_scalars_normalizer,
+    ).to(device)
 
     generator = Generator(
         latent_dim=args.latent_dim,

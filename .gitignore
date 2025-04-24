@@ -163,4 +163,4 @@ images/*
 *.pth
 
 .ruff_cache/
-.engibench_studies/
+engibench_studies/*

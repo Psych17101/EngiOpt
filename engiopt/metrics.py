@@ -6,11 +6,16 @@ optimality gap calculations.
 
 from __future__ import annotations
 
-from datasets import Dataset
-from engibench import OptiStep
-from engibench.core import Problem
+from typing import TYPE_CHECKING
+
 from gymnasium import spaces
 import numpy as np
+import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from datasets import Dataset
+    from engibench import OptiStep
+    from engibench.core import Problem
 
 
 def mmd(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
@@ -29,17 +34,17 @@ def mmd(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
         """Compute the Gaussian kernel between two samples."""
         return np.exp(-(np.linalg.norm(x - y) ** 2) / (2 * sigma**2))
 
-    n, length, w = x.shape
-    m, length, w = y.shape
+    n, _, _ = x.shape
+    m, _, _ = y.shape
 
     # Flatten the images to (n, length*w) and (m, length*w)
     x_flat = x.reshape(n, -1)
     y_flat = y.reshape(m, -1)
 
     # Compute pairwise kernel values
-    xx = np.mean([gaussian_kernel(x, x_, sigma) for x in x_flat for x_ in x_flat])
-    yy = np.mean([gaussian_kernel(y_, y__, sigma) for y_ in y_flat for y__ in y_flat])
-    xy = np.mean([gaussian_kernel(x, y_, sigma) for x in x_flat for y_ in y_flat])
+    xx: float = float(np.mean([gaussian_kernel(x, x_, sigma) for x in x_flat for x_ in x_flat]))
+    yy: float = float(np.mean([gaussian_kernel(y_, y__, sigma) for y_ in y_flat for y__ in y_flat]))
+    xy: float = float(np.mean([gaussian_kernel(x, y_, sigma) for x in x_flat for y_ in y_flat]))
 
     # Compute MMD
     return xx + yy - 2 * xy
@@ -66,9 +71,7 @@ def dpp_diversity(x: np.ndarray, sigma: float = 1.0) -> float:
     )
 
     # Compute the determinant of the similarity matrix
-    diversity = np.linalg.det(similarity_matrix + np.eye(n) * 1e-6)  # Add small value for numerical stability
-
-    return diversity
+    return np.linalg.det(similarity_matrix + np.eye(n) * 1e-6)  # Add small value for numerical stability
 
 
 def optimality_gap(opt_history: list[OptiStep], baseline: float) -> list[float]:
@@ -86,8 +89,8 @@ def optimality_gap(opt_history: list[OptiStep], baseline: float) -> list[float]:
 
 def metrics(
     problem: Problem,
-    gen_designs: np.ndarray,
-    dataset_designs: np.ndarray,
+    gen_designs: npt.NDArray,
+    dataset_designs: npt.NDArray,
     sampled_conditions: Dataset | None = None,
     sigma: float = 1.0,
 ) -> dict[str, float]:
@@ -129,20 +132,21 @@ def metrics(
         fog_list.append(opt_history_gaps[-1])
 
     # Compute the average Initial Optimality Gap (IOG), Cumulative Optimality Gap (COG), and Final Optimality Gap (FOG)
-    average_iog: float = np.mean(iog_list)  # Average of initial optimality gaps
-    average_cog: float = np.mean(cog_list)  # Average of cumulative optimality gaps
-    average_fog: float = np.mean(fog_list)  # Average of final optimality gaps
+    average_iog: float = float(np.mean(iog_list))  # Average of initial optimality gaps
+    average_cog: float = float(np.mean(cog_list))  # Average of cumulative optimality gaps
+    average_fog: float = float(np.mean(fog_list))  # Average of final optimality gaps
 
     # Compute the Maximum Mean Discrepancy (MMD) between generated and dataset designs
     # We compute the MMD on the flattened designs
-    flattened_ds_designs = []
+    flattened_ds_designs: list[npt.NDArray] = []
     for design in dataset_designs:
         if isinstance(problem.design_space, spaces.Dict):
-            flattened_ds_designs.append(spaces.flatten(problem.design_space, design))
+            flattened = spaces.flatten(problem.design_space, design)
+            flattened_ds_designs.append(np.array(flattened))
         else:
             flattened_ds_designs.append(design)
-    flattened_ds_designs = np.array(flattened_ds_designs)
-    mmd_value: float = mmd(gen_designs, flattened_ds_designs, sigma=sigma)
+    flattened_ds_designs_array: npt.NDArray = np.array(flattened_ds_designs)
+    mmd_value: float = mmd(gen_designs, flattened_ds_designs_array, sigma=sigma)
 
     # Compute the Determinantal Point Process (DPP) diversity for generated designs
     # We compute the DPP on the flattened designs

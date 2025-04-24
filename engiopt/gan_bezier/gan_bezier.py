@@ -5,11 +5,11 @@ See https://arxiv.org/abs/1808.08871 for more details on this algorithm.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 import os
 import random
 import time
+from typing import TYPE_CHECKING
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 from gymnasium import spaces
@@ -19,8 +19,10 @@ import torch as th
 from torch import nn
 import torch.nn.functional as f
 import tyro
-
 import wandb
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _EPS = 1e-7
 
@@ -91,7 +93,7 @@ class MLP(nn.Module):
         activation_block: Callable,
         alpha: float,
     ) -> nn.Sequential:
-        layers = []
+        layers: list[nn.Linear | nn.BatchNorm1d | nn.LeakyReLU] = []
         in_sizes = (self.in_features, *layer_width)
         out_sizes = (*layer_width, self.out_features)
         for idx, (in_f, out_f) in enumerate(zip(in_sizes, out_sizes)):
@@ -147,6 +149,8 @@ class CPWGenerator(nn.Module):
         self.w_gen = nn.Sequential(nn.Conv1d(deconv_channels[-1], 1, 1), nn.Sigmoid())
 
     def _calculate_parameters(self, n_control_points: int, channels: tuple[int, ...]) -> tuple[int, int]:
+        if not channels:
+            raise ValueError("channels tuple must not be empty")
         n_l = len(channels) - 1
         in_chnl = channels[0]
         in_width = n_control_points // (2**n_l)
@@ -360,8 +364,7 @@ def compute_r_loss(cp: th.Tensor, w: th.Tensor) -> th.Tensor:
     r_ends_loss = end_norm + penal
     r_ends_loss_mean = r_ends_loss.mean()
 
-    r_loss = r_w_loss + r_cp_loss + r_ends_loss_mean
-    return r_loss
+    return r_w_loss + r_cp_loss + r_ends_loss_mean
 
 
 def compute_q_loss(q_mean: th.Tensor, q_logstd: th.Tensor, q_target: th.Tensor) -> th.Tensor:
@@ -389,18 +392,23 @@ if __name__ == "__main__":
         )
 
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
-    if not isinstance(problem.design_space, spaces.Dict):
-        raise ValueError("This algorithm only works with Dict spaces (airfoil)")  # noqa: TRY003
-    os.makedirs("images", exist_ok=True)
+    if (
+        not isinstance(problem.design_space, spaces.Dict)
+        or "coords" not in problem.design_space
+        or "angle_of_attack" not in problem.design_space
+    ):
+        raise ValueError("Design space must be a Dict space with 'coords' and 'angle_of_attack' keys")
 
+    os.makedirs("images", exist_ok=True)
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
 
     bezier_control_pts = args.bezier_control_pts
-    n_data_points = problem.design_space['coords'].shape[1]   # for airfoil, 192
+    coords_space: spaces.Box = problem.design_space["coords"]
+    n_data_points = coords_space.shape[1]
 
     generator = Generator(
         latent_dim=args.latent_dim,

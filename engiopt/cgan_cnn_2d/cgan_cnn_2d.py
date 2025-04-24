@@ -18,7 +18,6 @@ from torch import nn
 from torchvision import transforms
 import tqdm
 import tyro
-
 import wandb
 
 
@@ -81,7 +80,7 @@ class Generator(nn.Module):
         latent_dim: int,
         n_conds: int,
         design_shape: tuple[int, int],
-        num_filters: list[int] = [256, 128, 64, 32],
+        num_filters: list[int] = [256, 128, 64, 32],  # noqa: B006
         out_channels: int = 1,
     ):
         super().__init__()
@@ -140,8 +139,7 @@ class Generator(nn.Module):
         out = self.up_blocks(x)  # -> (B, out_channels, 100, 100)
 
         # Resize Image
-        out = transforms.Resize((self.design_shape[0], self.design_shape[1]))(out)
-        return out
+        return transforms.Resize((self.design_shape[0], self.design_shape[1]))(out)
 
 
 class Discriminator(nn.Module):
@@ -159,7 +157,11 @@ class Discriminator(nn.Module):
     """
 
     def __init__(
-        self, n_conds: int, in_channels: int = 1, num_filters: list[int] = [32, 64, 128, 256], out_channels: int = 1
+        self,
+        n_conds: int,
+        in_channels: int = 1,
+        num_filters: list[int] = [32, 64, 128, 256],  # noqa: B006
+        out_channels: int = 1,
     ):
         super().__init__()
 
@@ -220,8 +222,7 @@ class Discriminator(nn.Module):
         h = self.down_blocks(h)  # -> (B, num_filters[3], 7, 7)
 
         # Final conv => (B, out_channels, 1, 1)
-        out = self.final_conv(h)
-        return out
+        return self.final_conv(h)
 
 
 if __name__ == "__main__":
@@ -240,7 +241,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
