@@ -258,7 +258,7 @@ if __name__ == "__main__":
         cross_attention_dim=64,
         block_out_channels=(32, 64, 128, 256),
         down_block_types=("CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "DownBlock2D"),
-        up_block_types=('UpBlock2D', 'CrossAttnUpBlock2D', 'CrossAttnUpBlock2D', 'CrossAttnUpBlock2D'),
+        up_block_types=("UpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D"),
         layers_per_block=args.layers_per_block,
         transformer_layers_per_block=1,
         encoder_hid_dim=encoder_hid_dim,
