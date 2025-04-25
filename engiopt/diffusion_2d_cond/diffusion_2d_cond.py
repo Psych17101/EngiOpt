@@ -393,7 +393,9 @@ if __name__ == "__main__":
                         "batch": batches_done,
                     }
                 )
-                print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] [loss: {loss.item()}]] [{time.time() - batch_start_time:.2f} sec]")
+                print(
+                    f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] [loss: {loss.item()}]] [{time.time() - batch_start_time:.2f} sec]"
+                )
 
                 # This saves a grid image of 25 generated designs every sample_interval
                 if batches_done % args.sample_interval == 0:
@@ -422,22 +424,22 @@ if __name__ == "__main__":
                     plt.close()
                     wandb.log({"designs": wandb.Image(img_fname)})
 
-                    # --------------
-                    #  Save models
-                    # --------------
-                    if args.save_model:
-                        ckpt_model = {
-                            "epoch": epoch,
-                            "batches_done": batches_done,
-                            "model": model.state_dict(),
-                            "optimizer_generator": optimizer.state_dict(),
-                            "loss": loss.item(),
-                        }
+                # --------------
+                #  Save models
+                # --------------
+                if args.save_model and epoch == args.n_epochs - 1 and i == len(dataloader) - 1:
+                    ckpt_model = {
+                        "epoch": epoch,
+                        "batches_done": batches_done,
+                        "model": model.state_dict(),
+                        "optimizer_generator": optimizer.state_dict(),
+                        "loss": loss.item(),
+                    }
 
-                        th.save(ckpt_model, "model.pth")
-                        artifact_model = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
-                        artifact_model.add_file("model.pth")
+                    th.save(ckpt_model, "model.pth")
+                    artifact_model = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
+                    artifact_model.add_file("model.pth")
 
-                        wandb.log_artifact(artifact_model, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact_model, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()

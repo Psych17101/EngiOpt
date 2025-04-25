@@ -13,11 +13,15 @@ import time
 from denoising_diffusion_pytorch import GaussianDiffusion1D
 from denoising_diffusion_pytorch import Unet1D
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from gymnasium import spaces
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
+from torchvision import transforms
 import tqdm
 import tyro
+
+from engiopt.transforms import flatten_dict_factory
 import wandb
 
 
@@ -69,8 +73,15 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
-    design_shape = problem.design_space.shape
+    if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
+        raise ValueError("This algorithm only works with Box or Dict spaces.")
 
+    if isinstance(problem.design_space, spaces.Box):
+        design_shape = problem.design_space.shape
+    else:
+        dummy_design, _ = problem.random_design()
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
+    print(f"Design shape: {design_shape}")
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
@@ -97,6 +108,7 @@ if __name__ == "__main__":
     model = Unet1D(
         dim=args.unet_dim,  # Used for the sinusoidal positional embeddings
         channels=args.n_channels,  # Number of channels in the input
+        dim_mults=(1,),
     ).to(device)
 
     diffusion = GaussianDiffusion1D(
@@ -107,8 +119,15 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
+
+    if isinstance(problem.design_space, spaces.Box):
+        transform = transforms.Lambda(lambda x: x.flatten(1))
+    elif isinstance(problem.design_space, spaces.Dict):
+        transform = flatten_dict_factory(problem, device)
+
     training_ds = th.utils.data.TensorDataset(
-        training_ds["optimal_design"], *[training_ds[key] for key in problem.conditions_keys]
+        transform(training_ds["optimal_design"]),
+        *[training_ds[key] for key in problem.conditions_keys],
     )
     dataloader = th.utils.data.DataLoader(
         training_ds,
@@ -127,9 +146,9 @@ if __name__ == "__main__":
         for i, data in enumerate(dataloader):
             # THIS IS PROBLEM DEPENDENT
 
-            designs = data["optimal_design"]
+            designs = data[0]
             designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs to a batch of 1D tensors with 1 channel
-
+            print(f"designs_flat shape: {designs_flat.shape}")
             # Learning
             optimizer.zero_grad()
             loss = diffusion(designs_flat)
@@ -148,6 +167,8 @@ if __name__ == "__main__":
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
                     designs = diffusion.sample(batch_size=25)
+                    if designs.dim() == 3:
+                        designs = designs.squeeze(1)
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
                     # Flatten axes for easy indexing
@@ -155,13 +176,17 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
-                        design = tensor.view(*design_shape)  # deflattens design
-                        x, y = design.cpu()  # Extract x and y coordinates
-                        axes[j].scatter(x, y, s=10, alpha=0.7)  # Scatter plot
-                        axes[j].set_xlim(-0.1, 1.1)  # Adjust x-axis limits
-                        axes[j].set_ylim(-0.5, 0.5)  # Adjust y-axis limits
+                        if isinstance(problem.design_space, spaces.Dict):
+                            design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
+                        else:
+                            design = tensor.cpu().numpy()
+                        fig, ax = problem.render(design)
+                        ax.figure.canvas.draw()
+                        img = np.array(fig.canvas.renderer.buffer_rgba())
+                        axes[j].imshow(img)
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
+                        plt.close(fig)  # Close the original figure to free memory
 
                     plt.tight_layout()
                     img_fname = f"images/{batches_done}.png"
@@ -169,21 +194,21 @@ if __name__ == "__main__":
                     plt.close()
                     wandb.log({"designs": wandb.Image(img_fname)})
 
-                    # --------------
-                    #  Save models
-                    # --------------
-                    if args.save_model:
-                        ckpt = {
-                            "epoch": epoch,
-                            "batches_done": batches_done,
-                            "model": diffusion.state_dict(),
-                            "loss": loss.item(),
-                        }
+                # --------------
+                #  Save models
+                # --------------
+                if args.save_model and epoch == args.n_epochs - 1 and i == len(dataloader) - 1:
+                    ckpt = {
+                        "epoch": epoch,
+                        "batches_done": batches_done,
+                        "model": diffusion.state_dict(),
+                        "loss": loss.item(),
+                    }
 
-                        th.save(ckpt, "model.pth")
-                        artifact = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
-                        artifact.add_file("model.pth")
+                    th.save(ckpt, "model.pth")
+                    artifact = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
+                    artifact.add_file("model.pth")
 
-                        wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()

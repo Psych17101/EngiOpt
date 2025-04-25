@@ -531,34 +531,34 @@ if __name__ == "__main__":
                 if args.track:
                     wandb.log({"designs": wandb.Image(img_fname)})
 
-                # --------------
-                #  Save models
-                # --------------
-                if args.save_model:
-                    ckpt_gen = {
-                        "epoch": epoch,
-                        "batches_done": batches_done,
-                        "generator": generator.state_dict(),
-                        "optimizer_generator": g_optimizer.state_dict(),
-                        "loss": g_loss_base.item(),
-                    }
-                    ckpt_disc = {
-                        "epoch": epoch,
-                        "batches_done": batches_done,
-                        "discriminator": discriminator.state_dict(),
-                        "optimizer_discriminator": d_optimizer.state_dict(),
-                        "loss": d_loss.item(),
-                    }
+            # --------------
+            #  Save models
+            # --------------
+            if args.save_model and epoch == args.n_epochs - 1 and i == len(dataloader) - 1:
+                ckpt_gen = {
+                    "epoch": epoch,
+                    "batches_done": batches_done,
+                    "generator": generator.state_dict(),
+                    "optimizer_generator": g_optimizer.state_dict(),
+                    "loss": g_loss_base.item(),
+                }
+                ckpt_disc = {
+                    "epoch": epoch,
+                    "batches_done": batches_done,
+                    "discriminator": discriminator.state_dict(),
+                    "optimizer_discriminator": d_optimizer.state_dict(),
+                    "loss": d_loss.item(),
+                }
 
-                    th.save(ckpt_gen, "bezier_generator.pth")
-                    th.save(ckpt_disc, "bezier_discriminator.pth")
-                    artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
-                    artifact_gen.add_file("bezier_generator.pth")
-                    artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
-                    artifact_disc.add_file("bezier_discriminator.pth")
+                th.save(ckpt_gen, "bezier_generator.pth")
+                th.save(ckpt_disc, "bezier_discriminator.pth")
+                artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
+                artifact_gen.add_file("bezier_generator.pth")
+                artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
+                artifact_disc.add_file("bezier_discriminator.pth")
 
-                    wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
-                    wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
+                wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 
     if args.track:
         wandb.finish()

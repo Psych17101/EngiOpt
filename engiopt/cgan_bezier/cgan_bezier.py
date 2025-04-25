@@ -594,7 +594,7 @@ if __name__ == "__main__":
 
                 conds, dp, sf = sample_designs(25)
                 do = th.cat((sf, conds.squeeze(1)), dim=1).cpu().numpy()
-                fig, axes = plt.subplots(5, 5, figsize=(12, 12), dpi=300)
+                fig, axes = plt.subplots(5, 5, figsize=(20, 20), dpi=300)
                 axes = axes.flatten()
                 for j in range(25):
                     do1 = do[j]
@@ -602,7 +602,7 @@ if __name__ == "__main__":
                     axes[j].scatter(x_plt, y_plt, s=10, alpha=0.7)
                     axes[j].set_xlim(-0.1, 1.1)
                     axes[j].set_ylim(-0.5, 0.5)
-                    title = [(problem.conditions[i][0], f"{do1[i]:.2f}") for i in range(min(len(problem.conditions), 4))]
+                    title = [(problem.conditions[i][0], f"{do1[i]:.2f}") for i in range(len(problem.conditions))]
                     title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
                     axes[j].title.set_text(title_string)  # Set title
                     axes[j].set_xticks([])
@@ -615,34 +615,34 @@ if __name__ == "__main__":
                 if args.track:
                     wandb.log({"designs": wandb.Image(img_fname)})
 
-                # --------------
-                #  Save models
-                # --------------
-                if args.save_model:
-                    ckpt_gen = {
-                        "epoch": epoch,
-                        "batches_done": batches_done,
-                        "generator": generator.state_dict(),
-                        "optimizer_generator": g_optimizer.state_dict(),
-                        "loss": g_loss_base.item(),
-                    }
-                    ckpt_disc = {
-                        "epoch": epoch,
-                        "batches_done": batches_done,
-                        "discriminator": discriminator.state_dict(),
-                        "optimizer_discriminator": d_optimizer.state_dict(),
-                        "loss": d_loss.item(),
-                    }
+            # --------------
+            #  Save models
+            # --------------
+            if args.save_model and epoch == args.n_epochs - 1 and i == len(dataloader) - 1:
+                ckpt_gen = {
+                    "epoch": epoch,
+                    "batches_done": batches_done,
+                    "generator": generator.state_dict(),
+                    "optimizer_generator": g_optimizer.state_dict(),
+                    "loss": g_loss_base.item(),
+                }
+                ckpt_disc = {
+                    "epoch": epoch,
+                    "batches_done": batches_done,
+                    "discriminator": discriminator.state_dict(),
+                    "optimizer_discriminator": d_optimizer.state_dict(),
+                    "loss": d_loss.item(),
+                }
 
-                    th.save(ckpt_gen, "bezier_generator.pth")
-                    th.save(ckpt_disc, "bezier_discriminator.pth")
-                    artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
-                    artifact_gen.add_file("bezier_generator.pth")
-                    artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
-                    artifact_disc.add_file("bezier_discriminator.pth")
+                th.save(ckpt_gen, "bezier_generator.pth")
+                th.save(ckpt_disc, "bezier_discriminator.pth")
+                artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
+                artifact_gen.add_file("bezier_generator.pth")
+                artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
+                artifact_disc.add_file("bezier_discriminator.pth")
 
-                    wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
-                    wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
+                wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 
     if args.track:
         wandb.finish()

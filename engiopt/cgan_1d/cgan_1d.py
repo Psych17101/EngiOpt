@@ -137,7 +137,8 @@ if __name__ == "__main__":
     else:
         dummy_design, _ = problem.random_design()
         design_shape = spaces.flatten(problem.design_space, dummy_design).shape
-    n_conds = len(problem.conditions)
+    conditions = problem.conditions
+    n_conds = len(conditions)
 
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -272,7 +273,7 @@ if __name__ == "__main__":
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
                     desired_conds, designs = sample_designs(25)
-                    fig, axes = plt.subplots(5, 5, figsize=(12, 12))
+                    fig, axes = plt.subplots(5, 5, figsize=(20, 20))
 
                     # Flatten axes for easy indexing
                     axes = axes.flatten()
@@ -289,7 +290,9 @@ if __name__ == "__main__":
                         ax.figure.canvas.draw()
                         img = np.array(fig.canvas.renderer.buffer_rgba())
                         axes[j].imshow(img)
-                        axes[j].title.set_text(f"m1: {dc[0]:.2f}, m2: {dc[1]:.2f}")
+                        title = [(conditions[i][0], f"{dc[i]:.2f}") for i in range(n_conds)]
+                        title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
+                        axes[j].title.set_text(title_string)  # Set title
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
                         plt.close(fig)  # Close the original figure to free memory
@@ -300,33 +303,33 @@ if __name__ == "__main__":
                     plt.close()
                     wandb.log({"designs": wandb.Image(img_fname)})
 
-                    # --------------
-                    #  Save models
-                    # --------------
-                    if args.save_model:
-                        ckpt_gen = {
-                            "epoch": epoch,
-                            "batches_done": batches_done,
-                            "generator": generator.state_dict(),
-                            "optimizer_generator": optimizer_generator.state_dict(),
-                            "loss": g_loss.item(),
-                        }
-                        ckpt_disc = {
-                            "epoch": epoch,
-                            "batches_done": batches_done,
-                            "discriminator": discriminator.state_dict(),
-                            "optimizer_discriminator": optimizer_discriminator.state_dict(),
-                            "loss": d_loss.item(),
-                        }
+                # --------------
+                #  Save models
+                # --------------
+                if args.save_model and epoch == args.n_epochs - 1 and i == len(dataloader) - 1:
+                    ckpt_gen = {
+                        "epoch": epoch,
+                        "batches_done": batches_done,
+                        "generator": generator.state_dict(),
+                        "optimizer_generator": optimizer_generator.state_dict(),
+                        "loss": g_loss.item(),
+                    }
+                    ckpt_disc = {
+                        "epoch": epoch,
+                        "batches_done": batches_done,
+                        "discriminator": discriminator.state_dict(),
+                        "optimizer_discriminator": optimizer_discriminator.state_dict(),
+                        "loss": d_loss.item(),
+                    }
 
-                        th.save(ckpt_gen, "generator.pth")
-                        th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
-                        artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
-                        artifact_disc.add_file("discriminator.pth")
+                    th.save(ckpt_gen, "generator.pth")
+                    th.save(ckpt_disc, "discriminator.pth")
+                    artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
+                    artifact_gen.add_file("generator.pth")
+                    artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
+                    artifact_disc.add_file("discriminator.pth")
 
-                        wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
-                        wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()
