@@ -8,11 +8,11 @@ description="A suite of benchmarks for automated engineering design."
 readme = "README.md"
 requires-python = ">= 3.9"
 authors = [{ name = "Florian Felten", email = "ffelten@mavt.ethz.ch" }]
-license = { text = "MIT License" }
-keywords = ["Mechanical Engineering", "AI", "Optimization"]
+license = { text = "GPL-3.0-or-later" }
+keywords = ["Mechanical Engineering", "Machine Learning", "AI", "Optimization"]
 classifiers = [
     "Development Status :: 4 - Beta",  # change to `5 - Production/Stable` when ready
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GPL-3.0-or-later",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -36,7 +36,6 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-# Update dependencies in `all` if any are added or removed
 all = [
     # All dependencies above
     # NOTE: No need to manually remove the duplicates, setuptools automatically does that.
@@ -45,10 +44,10 @@ all = [
 testing = ["pytest ==8.3.2"]
 
 [project.urls]
-Homepage = "TODO"
-Repository = "TODO"
-Documentation = "TODO"
-"Bug Report" = "TODO"
+Homepage = "https://ideal.ethz.ch"
+Repository = "https://github.com/IDEALLab/EngiOpt"
+Documentation = "https://engibench.ethz.ch"
+"Bug Report" = "https://github.com/IDEALLab/EngiOpt/issues"
 
 [tool.setuptools]
 include-package-data = true
@@ -107,39 +106,30 @@ target-version = "py39"
 
 ######################################## LINTING ########################################
 [tool.ruff.lint]
-select = [
-    "E",      # pycodestyle
-    "W",      # pycodestyle warnings
-    "F",      # flake
-    "I",      # isort
-    "N",      # pep8-naming
-    "D",      # pydocstyle
-    "UP",     # pyupgade
-    "ANN",    # flake8-annotations
-    "BLE",    # flake8-blind-except
-    "FBT",    # flake8-boolean-trap
-    "B",      # flake8-bugbear
-    "A",      # flake8-builtins
-    "C4",     # flake8-comprehensions
-    "FA",     # flake8-future-annotations
-    "SIM",    # flake8-simplify
-    "TID",    # flake8-tidy-imports
-    "ARG",    # flake8-unused-arguments
-    "FIX",    # flake8-fixme
-    "ERA",    # eradicate
-    "PL",     # Pylint
-    "TRY",    # tryceratops
-    "PERF",   # perflint
-    "RUF",    # Ruff specific
-    ]
+select = ["ALL"]
 ignore = [
-    "E501", # Ruff black style takes care of line length
-    "ANN003", # Kwargs type hinting is not necessary
-    "B006", # Do not use mutable default arguments
-    "D101", # Missing docstring in public module
-    "D107", # Missing docstring in __init__
-    "ANN204", # Missing type annotation for init method
+  "ANN",      # flake8-annotations (mypy's job)
+  "COM812",   # missing-trailing-comma (conflicts with formatter)
+  "CPY",      # flake8-copyright
+  "D105",     # undocumented-magic-method
+  "D107",     # undocumented-public-init
+  "D101",     # missing-class-docstring
+  "D102",     # missing-function-docstring
+  "D401",     # non-imperative-mood
+  "E501",     # line-too-long (formatter's job)
+  "EM101",    # raw-string-in-exception
+  "EM102",    # f-string-in-exception
+  "E741",     # ambiguous-variable-name
+  "FIX002",   # flake8-fixme (flake8-todos is enough)
+  "PTH",      # flake8-use-pathlib
+  "S101",     # flake8-bandit: assert
+  "S301",     # suspicious-pickle-usage
+  "S603",     # subprocess-without-shell-equals-true
+  "S607",     # start-process-with-partial-path
+  "T201",     # print
+  "TRY003",     # print
 ]
+extend-select = ["I"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
@@ -248,3 +238,43 @@ reportPrivateImportUsage = "warning" # ->
 
 reportPrivateUsage = "warning"
 reportUnboundVariable = "warning"
+
+[tool.mypy]
+warn_redundant_casts = true
+warn_unused_ignores = true
+files = ["engiopt/"]
+exclude = [
+  "^build/",
+  "^templates/.*",
+  "templates/.*",
+  ".*/templates/.*",
+  "^engibench_studies/problems/airfoil/study_[^/]*/",
+  "^docs/",
+  "^wandb/",
+]
+[[tool.mypy.overrides]]
+module = [
+    "gymnasium",
+    "tyro",
+    "wandb",
+    "tqdm",
+    "torch",
+    "torch.*",
+    "torchvision",
+    "engibench",
+    "engibench.*",
+    "denoising_diffusion_pytorch",
+    "diffusers",
+    "scipy.*",
+    "seaborn",
+    "matplotlib",
+    "matplotlib.*",
+    "pandas",
+    "cvxopt",
+    "cvxopt.*",
+    "datasets",
+    "networkx",
+    "autograd",
+    "autograd.*",
+]
+ignore_missing_imports = true

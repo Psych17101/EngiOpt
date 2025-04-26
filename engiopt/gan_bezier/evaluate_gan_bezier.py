@@ -1,4 +1,4 @@
-"""Evaluation for the GAN 1D."""
+"""Evaluation for the GAN Bezier."""
 
 from __future__ import annotations
 
@@ -10,18 +10,18 @@ import numpy as np
 import pandas as pd
 import torch as th
 import tyro
-import wandb
 
 from engiopt import metrics
 from engiopt.dataset_sample_conditions import sample_conditions
-from engiopt.gan_1d.gan_1d import Generator
+from engiopt.gan_bezier.gan_bezier import Generator
+import wandb
 
 
 @dataclasses.dataclass
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "airfoil"
+    problem_id: str = "airfoil2d"
     """Problem identifier."""
     seed_start: int = 1
     """Random starting seed."""
@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
         # Seeding for reproducibility
         th.manual_seed(seed)
-        rng = np.random.default_rng(seed)
+        np.random.seed(seed)
         th.backends.cudnn.deterministic = True
 
         # Select device
@@ -71,9 +71,9 @@ if __name__ == "__main__":
 
         ### Set Up Generator ###
         if args.wandb_entity is not None:
-            artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_gan_1d_generator:seed_{seed}"
+            artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_gan_bezier_generator:seed_{seed}"
         else:
-            artifact_path = f"{args.wandb_project}/{args.problem_id}_gan_1d_generator:seed_{seed}"
+            artifact_path = f"{args.wandb_project}/{args.problem_id}_gan_bezier_generator:seed_{seed}"
 
         api = wandb.Api()
         artifact = api.artifact(artifact_path, type="model")
@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
         run = artifact.logged_by()
         if run is None or not hasattr(run, "config"):
-            raise RunRetrievalError
+            raise RunRetrievalError()
 
         artifact_dir = artifact.download()
         ckpt_path = os.path.join(artifact_dir, "generator.pth")
@@ -92,6 +92,7 @@ if __name__ == "__main__":
 
         model = Generator(
             latent_dim=run.config["latent_dim"],
+            n_conds=len(problem.conditions),
             design_shape=problem.design_space.shape,
         ).to(device)
         model.load_state_dict(ckpt["generator"])

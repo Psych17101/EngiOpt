@@ -19,9 +19,9 @@ from torch import nn
 from torchvision import transforms
 import tqdm
 import tyro
+import wandb
 
 from engiopt.transforms import flatten_dict_factory
-import wandb
 
 
 @dataclass
@@ -65,18 +65,18 @@ class Args:
 
 
 class Generator(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_dim: int, design_shape: tuple[int, ...]):
         super().__init__()
 
-        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list:  # noqa: FBT001, FBT002
-            layers = [nn.Linear(in_feat, out_feat)]
+        def block(in_feat: int, out_feat: int, normalize: bool = True) -> list[nn.Module]:  # noqa: FBT001, FBT002
+            layers: list[nn.Module] = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
             layers.append(nn.LeakyReLU(0.2, inplace=True))
             return layers
 
         self.model = nn.Sequential(
-            *block(args.latent_dim, 128, normalize=False),
+            *block(latent_dim, 128, normalize=False),
             *block(128, 256),
             *block(256, 512),
             *block(512, 1024),
@@ -84,14 +84,13 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z: th.Tensor) -> th.Tensor:  # noqa: D102
+    def forward(self, z: th.Tensor) -> th.Tensor:
         design = self.model(z)
-        design = design.view(design.size(0), *design_shape)
-        return design
+        return design.view(design.size(0), *design_shape)
 
 
 class Discriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, design_shape: tuple[int, ...]):
         super().__init__()
 
         self.model = nn.Sequential(
@@ -103,11 +102,9 @@ class Discriminator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, design: th.Tensor) -> th.Tensor:  # noqa: D102
+    def forward(self, design: th.Tensor) -> th.Tensor:
         design_flat = design.view(design.size(0), -1)
-        validity = self.model(design_flat)
-
-        return validity
+        return self.model(design_flat)
 
 
 if __name__ == "__main__":
@@ -117,7 +114,7 @@ if __name__ == "__main__":
     problem.reset(seed=args.seed)
 
     if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
-        raise ValueError("This algorithm only works with Box or Dict spaces.")  # noqa: TRY003
+        raise ValueError("This algorithm only works with Box or Dict spaces.")
 
     if isinstance(problem.design_space, spaces.Box):
         design_shape = problem.design_space.shape
@@ -132,7 +129,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
@@ -149,8 +146,8 @@ if __name__ == "__main__":
     adversarial_loss = th.nn.BCELoss()
 
     # Initialize generator and discriminator
-    generator = Generator()
-    discriminator = Discriminator()
+    generator = Generator(latent_dim=args.latent_dim, design_shape=design_shape)
+    discriminator = Discriminator(design_shape=design_shape)
 
     generator.to(device)
     discriminator.to(device)
@@ -266,33 +263,33 @@ if __name__ == "__main__":
                     plt.close()
                     wandb.log({"designs": wandb.Image(img_fname)})
 
-                    # --------------
-                    #  Save models
-                    # --------------
-                    if args.save_model:
-                        ckpt_gen = {
-                            "epoch": epoch,
-                            "batches_done": batches_done,
-                            "generator": generator.state_dict(),
-                            "optimizer_generator": optimizer_generator.state_dict(),
-                            "loss": g_loss.item(),
-                        }
-                        ckpt_disc = {
-                            "epoch": epoch,
-                            "batches_done": batches_done,
-                            "discriminator": discriminator.state_dict(),
-                            "optimizer_discriminator": optimizer_discriminator.state_dict(),
-                            "loss": d_loss.item(),
-                        }
+                # --------------
+                #  Save models
+                # --------------
+                if args.save_model and epoch == args.n_epochs - 1 and i == len(dataloader) - 1:
+                    ckpt_gen = {
+                        "epoch": epoch,
+                        "batches_done": batches_done,
+                        "generator": generator.state_dict(),
+                        "optimizer_generator": optimizer_generator.state_dict(),
+                        "loss": g_loss.item(),
+                    }
+                    ckpt_disc = {
+                        "epoch": epoch,
+                        "batches_done": batches_done,
+                        "discriminator": discriminator.state_dict(),
+                        "optimizer_discriminator": optimizer_discriminator.state_dict(),
+                        "loss": d_loss.item(),
+                    }
 
-                        th.save(ckpt_gen, "generator.pth")
-                        th.save(ckpt_disc, "discriminator.pth")
-                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
-                        artifact_gen.add_file("generator.pth")
-                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
-                        artifact_disc.add_file("discriminator.pth")
+                    th.save(ckpt_gen, "generator.pth")
+                    th.save(ckpt_disc, "discriminator.pth")
+                    artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
+                    artifact_gen.add_file("generator.pth")
+                    artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
+                    artifact_disc.add_file("discriminator.pth")
 
-                        wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
-                        wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()

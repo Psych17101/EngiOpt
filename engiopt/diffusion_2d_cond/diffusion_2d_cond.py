@@ -7,7 +7,7 @@ import math
 import os
 import random
 import time
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 from diffusers import UNet2DConditionModel
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
@@ -17,8 +17,10 @@ import torch as th
 from torch.nn import functional
 import tqdm
 import tyro
-
 import wandb
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass
@@ -62,7 +64,7 @@ class Args:
 
     num_timesteps: int = 100
     """Number of timesteps in the diffusion schedule"""
-    layers_per_block: int = 1
+    layers_per_block: int = 2
     """Layers per U-NET block"""
     noise_schedule: Literal["linear", "cosine", "exp"] = "linear"
     """Diffusion schedule ('linear', 'cosine', 'exp')"""
@@ -83,13 +85,13 @@ def beta_schedule(
         exp_biasing: Whether to use exponential biasing
         exp_bias_factor: Exponential biasing factor
     """
-    beta = th.linspace(scale * start, scale * end, t)
+    beta: th.Tensor = th.linspace(scale * start, scale * end, t)
     cosine = options.get("cosine", False) if options else False
     exp_biasing = options.get("exp_biasing", False) if options else False
     exp_bias_factor = options.get("exp_bias_factor", 1) if options else 1
 
     if cosine:
-        beta = []
+        beta_list: list[float] = []
 
         def a_func(t_val: float) -> float:
             return math.cos((t_val + 0.008) / 1.008 * np.pi / 2) ** 2
@@ -97,9 +99,9 @@ def beta_schedule(
         for i in range(t):
             t1 = i / t
             t2 = (i + 1) / t
-            beta.append(min(1 - a_func(t2) / a_func(t1), 0.999))
+            beta_list.append(min(1 - a_func(t2) / a_func(t1), 0.999))
 
-        beta = th.tensor(beta)
+        beta = th.tensor(beta_list)
 
     if exp_biasing:
         beta = (th.flip(th.exp(-exp_bias_factor * th.linspace(0, 1, t)), dims=[0])) * beta
@@ -123,14 +125,19 @@ class DiffusionSampler:
         self.t = t
         self.betas = betas
         self.alphas = 1.0 - self.betas
-        self.alphas_cumprod = th.cumprod(self.alphas, axis=0)
+        self.alphas_cumprod = th.cumprod(self.alphas, dim=0)
         self.alphas_cumprod_prev = functional.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
         self.sqrt_recip_alphas = th.sqrt(1.0 / self.alphas)
         self.sqrt_alphas_cumprod = th.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = th.sqrt(1.0 - self.alphas_cumprod)
         self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
 
-    def forward_diffusion_sample(self, x_0: th.Tensor, t: th.Tensor, device: str = "cpu") -> tuple[th.Tensor, th.Tensor]:
+    def forward_diffusion_sample(
+        self,
+        x_0: th.Tensor,
+        t: th.Tensor,
+        device: th.device = th.device("cpu"),  # noqa: B008
+    ) -> tuple[th.Tensor, th.Tensor]:
         """Takes an image and a timestep as input and returns the noisy version of it.
 
         Returns the noisy version of the input image at the specified timestep.
@@ -145,7 +152,11 @@ class DiffusionSampler:
         ), noise.to(device)
 
     def forward_diffusion_sample_partial(
-        self, x_0: th.Tensor, t_current: th.Tensor, t_final: th.Tensor, device: str = "cpu"
+        self,
+        x_0: th.Tensor,
+        t_current: th.Tensor,
+        t_final: th.Tensor,
+        device: th.device = th.device("cpu"),  # noqa: B008
     ) -> tuple[th.Tensor, th.Tensor]:
         """Takes an image at a timestep and.
 
@@ -165,7 +176,11 @@ class DiffusionSampler:
         return x_0, noise.to(device)
 
     def diffusion_step_sample(
-        self, noise_pred: th.Tensor, x_noisy: th.Tensor, t: th.Tensor, device: str = "cpu"
+        self,
+        noise_pred: th.Tensor,
+        x_noisy: th.Tensor,
+        t: th.Tensor,
+        device: th.device = th.device("cpu"),  # noqa: B008
     ) -> th.Tensor:
         """Takes an image, noise and step; returns denoised image."""
         betas_t = get_index_from_list(self.betas, t, x_noisy.shape).to(device)
@@ -179,7 +194,7 @@ class DiffusionSampler:
         # mean + variance
         return (model_mean + th.sqrt(posterior_variance_t) * noise_pred).to(device)
 
-    def lossfn_builder(self) -> callable:
+    def lossfn_builder(self) -> Callable[[th.Tensor, th.Tensor], th.Tensor]:
         """Returns the loss function for the diffusion model."""
 
         def lossfn(noise_pred: th.Tensor, noise: th.Tensor) -> th.Tensor:
@@ -234,7 +249,7 @@ if __name__ == "__main__":
 
     # Seeding
     th.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
@@ -256,9 +271,9 @@ if __name__ == "__main__":
         in_channels=1,
         out_channels=1,
         cross_attention_dim=64,
-        block_out_channels=(64, 128),
-        down_block_types=("CrossAttnDownBlock2D", "DownBlock2D"),
-        up_block_types=("UpBlock2D", "CrossAttnUpBlock2D"),
+        block_out_channels=(32, 64, 128, 256),
+        down_block_types=("CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "DownBlock2D"),
+        up_block_types=("UpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D"),
         layers_per_block=args.layers_per_block,
         transformer_layers_per_block=1,
         encoder_hid_dim=encoder_hid_dim,
@@ -294,7 +309,6 @@ if __name__ == "__main__":
     optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)
 
     ## Schedule Parameters
-    t = num_timesteps  # Number of timesteps
     start = 1e-4  # Starting variance
     end = 0.02  # Ending variance
 
@@ -308,9 +322,9 @@ if __name__ == "__main__":
     ##
 
     # Choose a variance schedule
-    betas = beta_schedule(t=t, start=start, end=end, scale=1.0, options=options)
+    betas = beta_schedule(t=num_timesteps, start=start, end=end, scale=1.0, options=options)
 
-    ddm_sampler = DiffusionSampler(t, betas)
+    ddm_sampler = DiffusionSampler(num_timesteps, betas)
 
     # Loss function
     def ddm_loss_fn(noise_pred: th.Tensor, noise: th.Tensor) -> th.Tensor:
@@ -346,6 +360,7 @@ if __name__ == "__main__":
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
+            batch_start_time = time.time()
             # Zero the parameter gradients
             optimizer.zero_grad()
             designs = data[0].reshape(-1, 1, design_shape[0], design_shape[1])
@@ -378,7 +393,9 @@ if __name__ == "__main__":
                         "batch": batches_done,
                     }
                 )
-                print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] [loss: {loss.item()}]]")
+                print(
+                    f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] [loss: {loss.item()}]] [{time.time() - batch_start_time:.2f} sec]"
+                )
 
                 # This saves a grid image of 25 generated designs every sample_interval
                 if batches_done % args.sample_interval == 0:
@@ -407,22 +424,22 @@ if __name__ == "__main__":
                     plt.close()
                     wandb.log({"designs": wandb.Image(img_fname)})
 
-                    # --------------
-                    #  Save models
-                    # --------------
-                    if args.save_model:
-                        ckpt_model = {
-                            "epoch": epoch,
-                            "batches_done": batches_done,
-                            "model": model.state_dict(),
-                            "optimizer_generator": optimizer.state_dict(),
-                            "loss": loss.item(),
-                        }
+                # --------------
+                #  Save models
+                # --------------
+                if args.save_model and epoch == args.n_epochs - 1 and i == len(dataloader) - 1:
+                    ckpt_model = {
+                        "epoch": epoch,
+                        "batches_done": batches_done,
+                        "model": model.state_dict(),
+                        "optimizer_generator": optimizer.state_dict(),
+                        "loss": loss.item(),
+                    }
 
-                        th.save(ckpt_model, "model.pth")
-                        artifact_model = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
-                        artifact_model.add_file("model.pth")
+                    th.save(ckpt_model, "model.pth")
+                    artifact_model = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
+                    artifact_model.add_file("model.pth")
 
-                        wandb.log_artifact(artifact_model, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact_model, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()
