@@ -12,8 +12,8 @@ and logs every generation to Weights & Biases so you can explore:
 Example usage
 -------------
 python run_pe_optimization.py \
-    --model_gain_path my_models/final_pipeline_engiopt__mlp_tabular__18__1744565887_DcGain.pkl \
-    --model_ripple_path my_models/final_pipeline_engiopt__mlp_tabular__18__1744568179_Voltage_Ripple.pkl \
+    --model_gain_path "my_entity/engiopt/your_run_name_model:latest" \
+    --model_ripple_path "my_entity/engiopt/your_other_run_name_model:latest" \
     --device mps \
     --pop_size 500 \
     --n_gen 100 \
@@ -66,8 +66,8 @@ from model_pipeline import ModelPipeline  # noqa: E402  (after alias)
 @dataclass
 class Args:
     # Surrogate pipelines
-    model_gain_path: str = "my_models/final_pipeline_gain.pkl"
-    model_ripple_path: str = "my_models/final_pipeline_ripple.pkl"
+    model_gain_path: str = "my_entity/engiopt/your_run_name_model:latest"
+    model_ripple_path: str = "my_entity/engiopt/your_other_run_name_model:latest"
 
     # Optimisation hyperparameters
     pop_size: int = 500
@@ -83,8 +83,10 @@ class Args:
     wandb_entity: str | None = None
     wandb_run_name: str | None = None
     output_dir: str = "results"
-    save_csv: bool = False
+    save_csv: bool = True
     log_every: int = 1  # gens between logs
+    algo: str = "moo_ga"
+    problem_id: str = "power_electronics"
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +127,10 @@ class WandbLogCallback:
         if gen is None or gen % self.log_every != 0:
             return
 
-        opt = algorithm.opt
-        x_vals = opt["X"]  # type: ignore[index]  # if Pyright still complains
-        f_vals = opt["F"]  # type: ignore[index]
+        # Classic SolutionSet API
+        sol_set = algorithm.opt
+        f_vals = sol_set.get("F")      # returns an (n_points, n_obj) array
+        x_vals = sol_set.get("X")      # returns an (n_points, n_var) array
 
         # Initialize table columns once
         if self.columns is None:
@@ -142,7 +145,7 @@ class WandbLogCallback:
             current_table,
             x="f0",
             y="f1",
-            title=f"Pareto Front - Generation {gen}",
+            title=f"Pareto Front",
         )
 
         # Log metrics and visualizations
@@ -157,23 +160,42 @@ class WandbLogCallback:
         )
 
 
-# -------------------------   CSV persistence  -----------------------------
-def save_front(res: Result, output_dir: str) -> tuple[str, str, str]:
-    """Save Pareto front objectives and decision variables to CSV and return file paths."""
+# -------------------------   CSV & TXT persistence  -----------------------------
+def save_front(res: Result, output_dir: str) -> tuple[str, str, str, str, str]:
+    """Save Pareto front objectives and decision variables to CSV and TXT, and return file paths."""
     os.makedirs(output_dir, exist_ok=True)
-    # F
-    f_path = os.path.join(output_dir, "pareto_F.csv")
-    np.savetxt(f_path, res.F, delimiter=",", header="Objective_r,Objective_abs_g_minus_0.25", comments="")
-    # X
+
+    # F csv
+    f_csv = os.path.join(output_dir, "pareto_F.csv")
+    np.savetxt(
+        f_csv,
+        res.F,
+        delimiter=",",
+        header="Objective_r,Objective_abs_g_minus_0.25",
+        comments="",
+    )
+
+    # F txt
+    f_txt = os.path.join(output_dir, "pareto_F.txt")
+    np.savetxt(f_txt, res.F, fmt="%.6e", delimiter=",")
+
+    # X csv
+    x_csv = os.path.join(output_dir, "pareto_X.csv")
     cols = [f"x{i}" for i in range(res.X.shape[1])]
-    x_path = os.path.join(output_dir, "pareto_X.csv")
-    pd.DataFrame(res.X, columns=cols).to_csv(x_path, index=False)
-    # combined
-    front_path = os.path.join(output_dir, "pareto_front.csv")
-    df = pd.read_csv(x_path)
+    pd.DataFrame(res.X, columns=cols).to_csv(x_csv, index=False)
+
+    # X txt
+    x_txt = os.path.join(output_dir, "pareto_X.txt")
+    np.savetxt(x_txt, res.X, fmt="%.6e", delimiter=",")
+
+    # combined csv
+    front_csv = os.path.join(output_dir, "pareto_front.csv")
+    df = pd.read_csv(x_csv)
     df[["f0", "f1"]] = res.F
-    df.to_csv(front_path, index=False)
-    return f_path, x_path, front_path
+    df.to_csv(front_csv, index=False)
+
+    return f_csv, x_csv, front_csv, f_txt, x_txt
+
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +206,7 @@ def main(args: Args) -> None:
     device = get_device(args.device)
     print(f"[INFO] Device: {device}")
 
-    run_name = args.wandb_run_name or f"pymoo_opt__{args.seed}__{int(time.time())}"
+    run_name = args.wandb_run_name or f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
         wandb.init(
             project=args.wandb_project,
@@ -196,9 +218,17 @@ def main(args: Args) -> None:
         wandb.define_metric("generation")
         wandb.define_metric("*", step_metric="generation")
 
-    # load models on-device
-    pipeline_g = ModelPipeline.load(args.model_gain_path)
-    pipeline_r = ModelPipeline.load(args.model_ripple_path)
+    # load models from weights and biases
+    gain_art = wandb.run.use_artifact(args.model_gain_path, type="model")
+    gain_dir = gain_art.download()
+    # find the .pkl inside that dir (we assume there's exactly one)
+    gain_file = next(f for f in os.listdir(gain_dir) if f.endswith(".pkl"))
+    pipeline_g = ModelPipeline.load(os.path.join(gain_dir, gain_file))
+
+    ripple_art = wandb.run.use_artifact(args.model_ripple_path, type="model")
+    ripple_dir = ripple_art.download()
+    ripple_file = next(f for f in os.listdir(ripple_dir) if f.endswith(".pkl"))
+    pipeline_r = ModelPipeline.load(os.path.join(ripple_dir, ripple_file))
 
     problem = MyPowerElecProblem(
         pipeline_r=pipeline_r,
@@ -217,17 +247,16 @@ def main(args: Args) -> None:
         callback=WandbLogCallback(args.log_every, track=args.track),
     )
 
-    print(f"[INFO] Done - Pareto size: {len(res.F)}")
-
     if args.save_csv:
-        f_path, x_path, front_path = save_front(res, args.output_dir)
-        print(f"[INFO] Saved to {args.output_dir}")
+        _, _, _, f_txt, x_txt = save_front(res, args.output_dir)
+        print(f"[INFO] Saved CSV and TXT to {args.output_dir}")
         if args.track:
-            art = wandb.Artifact(f"{run_name}_pareto", type="pymoo_results")
-            art.add_file(f_path)
-            art.add_file(x_path)
-            art.add_file(front_path)
-            wandb.log_artifact(art)
+            # Only upload the TXT versions as a W&B artifact
+            txt_art = wandb.Artifact(f"{run_name}_pareto_txt", type="pymoo_results")
+            txt_art.add_file(f_txt)
+            txt_art.add_file(x_txt)
+            wandb.log_artifact(txt_art)
+
 
     if args.track:
         wandb.finish()

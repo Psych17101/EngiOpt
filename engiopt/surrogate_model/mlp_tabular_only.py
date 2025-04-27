@@ -195,28 +195,6 @@ def get_device(args: Args) -> torch.device:
         raise ValueError(f"Invalid device: {args.device}")
 
 
-def split_data(
-    x_features_all: np.ndarray, y_all: np.ndarray, args: Args
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Split data into training, validation, and test sets.
-
-    Args:
-        x_features_all: Feature data as a numpy array.
-        y_all: Target data as a numpy array.
-        args: Configuration arguments containing splitting parameters.
-
-    Returns:
-        tuple: A tuple containing (x_train, x_val, x_test, y_train, y_val, y_test)
-               where each element is a numpy array of the corresponding split.
-    """
-    x_temp, x_test, y_temp, y_test = train_test_split(
-        x_features_all, y_all, test_size=args.test_size, random_state=args.split_random_state
-    )
-    x_train, x_val, y_train, y_val = train_test_split(
-        x_temp, y_temp, test_size=args.val_size_of_train, random_state=args.split_random_state
-    )
-    return x_train, x_val, x_test, y_train, y_val, y_test
-
 
 def scale_data(
     x_train: np.ndarray,
@@ -358,7 +336,7 @@ def main(args: Args) -> float:
 
     This function orchestrates the entire process:
     1. Loads and preprocesses data
-    2. Splits data into train/val/test sets (if not already split)
+    2. Uses already split train/val/test sets
     3. Scales the data
     4. Trains an ensemble of models
     5. Evaluates the models on test data

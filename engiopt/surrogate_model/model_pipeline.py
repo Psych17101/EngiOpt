@@ -425,16 +425,19 @@ class ModelPipeline:
         processed, _ = self.preprocessor.transform_inputs(raw_input, fit_params=False)
         return processed
 
-    def _scale_parameters(self, processed_data: dict[str, np.ndarray]) -> np.ndarray:
-        """Scale parameters using the appropriate scaler."""
-        params = processed_data["params"] if self.structured else processed_data["X"]
-
+    # in ModelPipeline._scale_parameters
+    def _scale_parameters(self, processed_data):
+        params = processed_data["X"] if not self.structured else processed_data["params"]
         if "scaler_params" in self.scalers:
             return self.scalers["scaler_params"].transform(params)
+        # allow lowercase key
+        elif "scaler_x" in self.scalers:
+            return self.scalers["scaler_x"].transform(params)
         elif "scaler_X" in self.scalers:
             return self.scalers["scaler_X"].transform(params)
         else:
             return params
+
 
     def _prepare_tensors(
         self, processed_data: dict[str, np.ndarray], params_scaled: np.ndarray
