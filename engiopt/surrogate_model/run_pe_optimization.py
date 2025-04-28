@@ -28,13 +28,11 @@ from dataclasses import dataclass
 import os
 import sys
 import time
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 from pymoo.algorithms.moo.nsga2 import NSGA2
-from pymoo.core.algorithm import Algorithm
-from pymoo.core.result import Result
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
 import torch
@@ -58,6 +56,10 @@ sys.modules.setdefault("model_pipeline", _engiopt_model_pipeline)
 sys.modules.setdefault("pymoo_pe_problem", sys.modules["pymoo_pe_problem"])
 
 from model_pipeline import ModelPipeline  # noqa: E402  (after alias)
+
+if TYPE_CHECKING:
+    from pymoo.core.algorithm import Algorithm
+    from pymoo.core.result import Result
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +131,8 @@ class WandbLogCallback:
 
         # Classic SolutionSet API
         sol_set = algorithm.opt
-        f_vals = sol_set.get("F")      # returns an (n_points, n_obj) array
-        x_vals = sol_set.get("X")      # returns an (n_points, n_var) array
+        f_vals = sol_set.get("F")  # returns an (n_points, n_obj) array
+        x_vals = sol_set.get("X")  # returns an (n_points, n_var) array
 
         # Initialize table columns once
         if self.columns is None:
@@ -145,7 +147,7 @@ class WandbLogCallback:
             current_table,
             x="f0",
             y="f1",
-            title=f"Pareto Front",
+            title="Pareto Front",
         )
 
         # Log metrics and visualizations
@@ -197,7 +199,6 @@ def save_front(res: Result, output_dir: str) -> tuple[str, str, str, str, str]:
     return f_csv, x_csv, front_csv, f_txt, x_txt
 
 
-
 # ---------------------------------------------------------------------------
 #  Main
 # ---------------------------------------------------------------------------
@@ -219,6 +220,7 @@ def main(args: Args) -> None:
         wandb.define_metric("*", step_metric="generation")
 
     # load models from weights and biases
+    assert wandb.run is not None, f"W&B run not found for run_name={run_name} in {args.wandb_entity}/{args.wandb_project}"
     gain_art = wandb.run.use_artifact(args.model_gain_path, type="model")
     gain_dir = gain_art.download()
     # find the .pkl inside that dir (we assume there's exactly one)
@@ -256,7 +258,6 @@ def main(args: Args) -> None:
             txt_art.add_file(f_txt)
             txt_art.add_file(x_txt)
             wandb.log_artifact(txt_art)
-
 
     if args.track:
         wandb.finish()
