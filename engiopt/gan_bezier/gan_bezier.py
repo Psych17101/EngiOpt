@@ -19,6 +19,7 @@ import torch as th
 from torch import nn
 import torch.nn.functional as f
 import tyro
+
 import wandb
 
 if TYPE_CHECKING:

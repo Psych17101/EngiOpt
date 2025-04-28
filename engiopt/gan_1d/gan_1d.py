@@ -19,9 +19,9 @@ from torch import nn
 from torchvision import transforms
 import tqdm
 import tyro
-import wandb
 
 from engiopt.transforms import flatten_dict_factory
+import wandb
 
 
 @dataclass

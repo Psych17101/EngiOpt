@@ -12,10 +12,10 @@ import numpy as np
 import pandas as pd
 import torch as th
 import tyro
-import wandb
 
 from engiopt import metrics
 from engiopt.dataset_sample_conditions import sample_conditions
+import wandb
 
 
 @dataclasses.dataclass

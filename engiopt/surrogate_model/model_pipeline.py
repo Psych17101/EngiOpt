@@ -486,7 +486,7 @@ class ModelPipeline:
         y_true: np.ndarray,
         batch_size: int = 256,
         device: torch.device | None = None,
-        metrics: list[str] = ["mse", "rmse", "rel_err"],
+        metrics: list[str] | None = None,
     ) -> dict[str, float]:
         """Evaluates predictions against ground-truth using specified metrics.
 
@@ -505,6 +505,8 @@ class ModelPipeline:
         Returns:
             Dictionary mapping metric names to computed float values.
         """
+        if metrics is None:
+            metrics = ["mse", "rmse", "rel_err"]
         if device is None:
             device = torch.device("cpu")
         y_pred = self.predict(raw_input, batch_size=batch_size, device=device)
