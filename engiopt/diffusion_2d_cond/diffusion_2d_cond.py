@@ -306,7 +306,7 @@ if __name__ == "__main__":
     num_timesteps = args.num_timesteps
 
     # Training loop
-    optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)  # type: ignore[attr-defined]
+    optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)
 
     ## Schedule Parameters
     start = 1e-4  # Starting variance

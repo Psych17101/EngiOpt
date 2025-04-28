@@ -109,7 +109,7 @@ if __name__ == "__main__":
             transformer_layers_per_block=1,
             encoder_hid_dim=len(problem.conditions),
             only_cross_attention=True,
-        ).to(device)  # type: ignore[attr-defined]
+        ).to(device)
 
         # Noise schedule
         options = {

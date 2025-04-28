@@ -80,7 +80,7 @@ if __name__ == "__main__":
         design_shape = problem.design_space.shape
     else:
         dummy_design, _ = problem.random_design()
-        design_shape = spaces.flatten(problem.design_space, dummy_design).shape  # type: ignore[union-attr]
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
     print(f"Design shape: {design_shape}")
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
@@ -182,7 +182,7 @@ if __name__ == "__main__":
                             design = tensor.cpu().numpy()
                         fig, ax = problem.render(design)
                         ax.figure.canvas.draw()
-                        img = np.array(fig.canvas.renderer.buffer_rgba())  # type: ignore[attr-defined]
+                        img = np.array(fig.canvas.renderer.buffer_rgba())
                         axes[j].imshow(img)
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks

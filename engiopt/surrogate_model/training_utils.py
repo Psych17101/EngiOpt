@@ -265,7 +265,7 @@ def train_one_model(  # noqa: PLR0915
     for epoch in range(args.n_epochs):
         model.train()
         running_train_loss = 0.0
-        n_train = len(train_loader.dataset)  # type: ignore  # noqa: PGH003
+        n_train = len(train_loader.dataset)
         for batch_data in train_loader:
             opt.zero_grad()
             loss = train_step(batch_data)
@@ -278,7 +278,7 @@ def train_one_model(  # noqa: PLR0915
 
         model.eval()
         running_val_loss = 0.0
-        n_val = len(val_loader.dataset)  # type: ignore  # noqa: PGH003
+        n_val = len(val_loader.dataset)
         with torch.no_grad():
             for batch_data in val_loader:
                 loss_val = valid_step(batch_data)
