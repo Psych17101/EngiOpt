@@ -167,7 +167,7 @@ if __name__ == "__main__":
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
                     designs = diffusion.sample(batch_size=25)
-                    if designs.dim() == 3:
+                    if designs.dim() == 3:  # noqa: PLR2004
                         designs = designs.squeeze(1)
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
