@@ -17,6 +17,7 @@ import torch as th
 from torch.nn import functional
 import tqdm
 import tyro
+
 import wandb
 
 if TYPE_CHECKING:
@@ -221,9 +222,8 @@ class DiffusionSampler:
             sqrt_recip_alphas_t = get_index_from_list(self.sqrt_recip_alphas, t, x.shape)
 
             # Call model (current image - noise prediction)
-            model_mean = sqrt_recip_alphas_t * (
-                x - betas_t * model(x, t, encoder_hidden_states).sample / sqrt_one_minus_alphas_cumprod_t
-            )
+            noise_pred = model(x, t, encoder_hidden_states).sample
+            model_mean = sqrt_recip_alphas_t * (x - betas_t * noise_pred / sqrt_one_minus_alphas_cumprod_t)
 
             posterior_variance_t = get_index_from_list(self.posterior_variance, t, x.shape)
             if t_mask is None:
@@ -263,7 +263,7 @@ if __name__ == "__main__":
         device = th.device("cpu")
 
     # Loss function
-    adversarial_loss = th.nn.MSELoss()
+    adversarial_loss: th.nn.Module = th.nn.MSELoss()
     encoder_hid_dim = len(problem.conditions)
     # Initialize UNet from Huggingface
     model = UNet2DConditionModel(

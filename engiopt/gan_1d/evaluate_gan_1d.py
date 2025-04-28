@@ -10,11 +10,11 @@ import numpy as np
 import pandas as pd
 import torch as th
 import tyro
-import wandb
 
 from engiopt import metrics
 from engiopt.dataset_sample_conditions import sample_conditions
 from engiopt.gan_1d.gan_1d import Generator
+import wandb
 
 
 @dataclasses.dataclass
