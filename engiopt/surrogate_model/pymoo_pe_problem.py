@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from model_pipeline import ModelPipeline
 import numpy as np
 import pandas as pd
 from pymoo.core.problem import ElementwiseProblem
-import torch
+
+if TYPE_CHECKING:
+    from model_pipeline import ModelPipeline
+    import torch
 
 
 class MyPowerElecProblem(ElementwiseProblem):

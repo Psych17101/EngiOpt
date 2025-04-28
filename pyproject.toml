@@ -33,7 +33,8 @@ dependencies = [
     "denoising_diffusion_pytorch",
     "diffusers >= 0.33.1",
     "pymoo >= 0.6",
-    "ax-platform >= 0.5"
+    "ax-platform >= 0.5",
+    "scikit-learn >= 1.6.0",
 ]
 dynamic = ["version"]
 
@@ -130,6 +131,7 @@ ignore = [
   "S607",     # start-process-with-partial-path
   "T201",     # print
   "TRY003",     # print
+  "PD901",     # avoid using df to name dataframe
 ]
 extend-select = ["I"]
 

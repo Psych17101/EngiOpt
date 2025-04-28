@@ -1,7 +1,3 @@
-# ruff: noqa: TRY003
-# ruff: noqa: PLR0913
-# ruff: noqa: PLR0915
-
 """Utility classes for data preprocessing and model pipeline management.
 
 Handles raw data transformations for both training and inference. This includes
@@ -33,19 +29,13 @@ import pickle
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 
 MIN_UNIQUE_FOR_ONEHOT = 5
 
 
-def _raise_error(msg: str, error_type: type[Exception]) -> None:
-    raise error_type(msg)
-
-
-###############################################################################
-# DataPreprocessor
-###############################################################################
 class DataPreprocessor:
     """Handles raw data transformations.
 
@@ -77,21 +67,17 @@ class DataPreprocessor:
         Returns:
             Preprocessed DataFrame.
         """
-        # 1) Strip column spaces if requested.
-        if self.args.get("strip_column_spaces", False):
-            df.columns = [col.strip() for col in df.columns]
-
-        # 2) Flatten columns if requested.
+        # 1) Flatten columns if requested.
         flatten_cols = self.args.get("flatten_columns", [])
         if flatten_cols:
             df = self._flatten_list_columns(df, flatten_cols)
 
-        # 3) Subset condition.
+        # 2) Subset condition.
         subset_condition = self.args.get("subset_condition", None)
         if subset_condition:
             df = df.query(subset_condition)
 
-        # 4) Nondimensionalization.
+        # 3) Nondimensionalization.
         nondim_map = self.args.get("nondim_map", None)
         if nondim_map:
             if isinstance(nondim_map, str):
@@ -100,7 +86,7 @@ class DataPreprocessor:
                 if col in df.columns and ref in df.columns:
                     df[col] = df[col] / df[ref]
 
-        # 5) Log-transform target if requested.
+        # 4) Log-transform target if requested.
         if self.args.get("log_target", False):
             target_col = self.args.get("target_col", None)
             if target_col in df.columns:
@@ -112,8 +98,9 @@ class DataPreprocessor:
     def transform_inputs(
         self,
         df: pd.DataFrame,
-        fit_params: bool = False,  # noqa: FBT001, FBT002
-    ) -> tuple[dict[str, np.ndarray], pd.DataFrame]:
+        *,
+        fit_params: bool = False,
+    ) -> tuple[dict[str, npt.NDArray], pd.DataFrame]:
         """Transforms raw data into arrays for model input.
 
         Returns both the input arrays and the processed DataFrame.
@@ -149,24 +136,23 @@ class DataPreprocessor:
             # Gather shape columns
             init_cols = [c for c in df_processed.columns if c.startswith(init_col + "_")]
             opt_cols = [c for c in df_processed.columns if c.startswith(opt_col + "_")]
-            x_init = df_processed[init_cols].values if init_cols else None
-            x_opt = df_processed[opt_cols].values if opt_cols else None
+            x_init = df_processed[init_cols].to_numpy() if init_cols else None
+            x_opt = df_processed[opt_cols].to_numpy() if opt_cols else None
 
             # Process parameter columns
             if fit_params:
                 param_df = self._split_params_with_onehot(df_processed, param_cols)
             else:
                 param_df = self._apply_params_inference(df_processed, param_cols)
-            params = param_df.values if len(param_df.columns) > 0 else np.empty((len(df_processed), 0))
+            params = param_df.to_numpy() if len(param_df.columns) > 0 else np.empty((len(df_processed), 0))
             return {"x_init": x_init, "x_opt": x_opt, "params": params}, df_processed
+        # Unstructured mode
+        if fit_params:
+            param_df = self._split_params_with_onehot(df_processed, param_cols)
         else:
-            # Unstructured mode
-            if fit_params:
-                param_df = self._split_params_with_onehot(df_processed, param_cols)
-            else:
-                param_df = self._apply_params_inference(df_processed, param_cols)
-            x = param_df.values if len(param_df.columns) > 0 else np.empty((len(df_processed), 0))
-            return {"X": x}, df_processed
+            param_df = self._apply_params_inference(df_processed, param_cols)
+        x = param_df.to_numpy() if len(param_df.columns) > 0 else np.empty((len(df_processed), 0))
+        return {"X": x}, df_processed
 
     def _split_params_with_onehot(self, df: pd.DataFrame, param_cols: list[str]) -> pd.DataFrame:
         """Splits parameter columns into continuous and categorical subsets.
@@ -336,7 +322,7 @@ class ModelPipeline:
     Provides convenience methods for prediction, evaluation, saving, and loading.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         models: list[torch.nn.Module],
         scalers: dict[str, Any],
@@ -431,13 +417,11 @@ class ModelPipeline:
         if "scaler_params" in self.scalers:
             return self.scalers["scaler_params"].transform(params)
         # allow lowercase key
-        elif "scaler_x" in self.scalers:
+        if "scaler_x" in self.scalers:
             return self.scalers["scaler_x"].transform(params)
-        elif "scaler_X" in self.scalers:
+        if "scaler_X" in self.scalers:
             return self.scalers["scaler_X"].transform(params)
-        else:
-            return params
-
+        return params
 
     def _prepare_tensors(
         self, processed_data: dict[str, np.ndarray], params_scaled: np.ndarray
@@ -577,5 +561,4 @@ class ModelPipeline:
         if not os.path.isfile(filepath):
             raise FileNotFoundError(f"File not found: {filepath}")
         with open(filepath, "rb") as f:
-            pipeline = pickle.load(f)
-        return pipeline
+            return pickle.load(f)

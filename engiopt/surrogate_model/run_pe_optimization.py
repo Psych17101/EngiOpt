@@ -1,4 +1,3 @@
-# ruff: noqa: TRY003,TRY301,PLR0913,PLR0915
 """run_pe_optimization.py.
 
 Command-line script to run the multi-objective power-electronics design
@@ -26,36 +25,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-import sys
 import time
 from typing import Literal, TYPE_CHECKING
-
-import numpy as np
-import pandas as pd
-from pymoo.algorithms.moo.nsga2 import NSGA2
-from pymoo.optimize import minimize
-from pymoo.termination import get_termination
-import torch
-import tyro
-
-import wandb
 
 # ---------------------------------------------------------------------------
 #  Local imports - ensure that the pickled ModelPipeline can be un-pickled
 #  no matter whether it was saved from the top-level model_pipeline module
 #  or from the package path engiopt.model_pipeline.
 # ---------------------------------------------------------------------------
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(REPO_ROOT)  # favour local checkout
+from model_pipeline import ModelPipeline
+import numpy as np
+import pandas as pd
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.optimize import minimize
+from pymoo.termination import get_termination
+from pymoo_pe_problem import MyPowerElecProblem
+import torch
+import tyro
 
-import model_pipeline as _engiopt_model_pipeline  # noqa: E402
-from pymoo_pe_problem import MyPowerElecProblem  # noqa: E402
-
-# Make "model_pipeline" & "pymoo_pe_problem" aliases so that pickle finds them
-sys.modules.setdefault("model_pipeline", _engiopt_model_pipeline)
-sys.modules.setdefault("pymoo_pe_problem", sys.modules["pymoo_pe_problem"])
-
-from model_pipeline import ModelPipeline  # noqa: E402  (after alias)
+import wandb
 
 if TYPE_CHECKING:
     from pymoo.core.algorithm import Algorithm
@@ -131,6 +119,7 @@ class WandbLogCallback:
 
         # Classic SolutionSet API
         sol_set = algorithm.opt
+        assert sol_set is not None, "SolutionSet is None"
         f_vals = sol_set.get("F")  # returns an (n_points, n_obj) array
         x_vals = sol_set.get("X")  # returns an (n_points, n_var) array
 
@@ -167,36 +156,36 @@ def save_front(res: Result, output_dir: str) -> tuple[str, str, str, str, str]:
     """Save Pareto front objectives and decision variables to CSV and TXT, and return file paths."""
     os.makedirs(output_dir, exist_ok=True)
 
-    # F csv
-    f_csv = os.path.join(output_dir, "pareto_F.csv")
+    # Pareto front csv
+    evals_csv = os.path.join(output_dir, "pareto_front.csv")
     np.savetxt(
-        f_csv,
+        evals_csv,
         res.F,
         delimiter=",",
         header="Objective_r,Objective_abs_g_minus_0.25",
         comments="",
     )
 
-    # F txt
-    f_txt = os.path.join(output_dir, "pareto_F.txt")
-    np.savetxt(f_txt, res.F, fmt="%.6e", delimiter=",")
+    # Pareto front txt
+    evals_txt = os.path.join(output_dir, "pareto_front.txt")
+    np.savetxt(evals_txt, res.F, fmt="%.6e", delimiter=",")
 
-    # X csv
-    x_csv = os.path.join(output_dir, "pareto_X.csv")
+    # Designs csv -- Pareto set
+    designs_csv = os.path.join(output_dir, "pareto_set.csv")
     cols = [f"x{i}" for i in range(res.X.shape[1])]
-    pd.DataFrame(res.X, columns=cols).to_csv(x_csv, index=False)
+    pd.DataFrame(res.X, columns=cols).to_csv(designs_csv, index=False)
 
-    # X txt
-    x_txt = os.path.join(output_dir, "pareto_X.txt")
-    np.savetxt(x_txt, res.X, fmt="%.6e", delimiter=",")
+    # Pareto set txt
+    designs_txt = os.path.join(output_dir, "pareto_set.txt")
+    np.savetxt(designs_txt, res.X, fmt="%.6e", delimiter=",")
 
-    # combined csv
-    front_csv = os.path.join(output_dir, "pareto_front.csv")
-    df = pd.read_csv(x_csv)
-    df[["f0", "f1"]] = res.F
-    df.to_csv(front_csv, index=False)
+    # combined front and set
+    pareto_csv = os.path.join(output_dir, "pareto_both.csv")
+    pareto_df = pd.read_csv(designs_csv)
+    pareto_df[["f0", "f1"]] = res.F
+    pareto_df.to_csv(pareto_csv, index=False)
 
-    return f_csv, x_csv, front_csv, f_txt, x_txt
+    return evals_csv, designs_csv, pareto_csv, evals_txt, designs_txt
 
 
 # ---------------------------------------------------------------------------

@@ -1,19 +1,20 @@
-# ruff: noqa: TRY003
-# ruff: noqa: PLR0915
 """Utility functions and classes for training neural network models."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TYPE_CHECKING
 
-import numpy as np
 import torch
 from torch import nn
 from torch import optim
-import torch.nn.functional as f
+import torch.nn.functional as F  # noqa: N812
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    import numpy as np
 
 
 # Protocol for training arguments to replace Any.
@@ -31,6 +32,7 @@ class TrainArgs(Protocol):
     lr_decay: float
     lr_decay_step: int
     patience: int
+    l2_lambda: float
 
 
 # Dictionaries for activation & optimizer
@@ -72,12 +74,11 @@ def get_device(args: TrainArgs) -> torch.device:
     """
     if args.device == "mps" and torch.backends.mps.is_available():
         return torch.device("mps")
-    elif args.device == "cuda" and torch.cuda.is_available():
+    if args.device == "cuda" and torch.cuda.is_available():
         return torch.device("cuda")
-    elif args.device == "cpu":
+    if args.device == "cpu":
         return torch.device("cpu")
-    else:
-        raise ValueError(f"Invalid device: {args.device}")
+    raise ValueError(f"Invalid device: {args.device}")
 
 
 def make_activation(activation: str) -> nn.Module:
@@ -194,7 +195,41 @@ class PlainTabularDataset(Dataset):
         return self.x[idx], self.y[idx]
 
 
-def train_one_model(
+def _create_mlp(  # noqa: PLR0913
+    in_dim: int,
+    hidden_size: int,
+    hidden_layers: int,
+    activation: str,
+    device: torch.device,
+    out_dim: int = 1,
+) -> nn.Sequential:
+    """Create a multi-layer perceptron model.
+
+    Args:
+        in_dim: Input dimension.
+        hidden_size: Size of hidden layers.
+        hidden_layers: Number of hidden layers.
+        activation: Activation function name.
+        out_dim: Output dimension. Default is 1.
+        device: Device to create the model on.
+
+    Returns:
+        A sequential model with the specified architecture.
+    """
+    act_fn = make_activation(activation)
+    layers = []
+    current_dim = in_dim
+
+    for _ in range(hidden_layers):
+        layers.append(nn.Linear(current_dim, hidden_size))
+        layers.append(act_fn)
+        current_dim = hidden_size
+
+    layers.append(nn.Linear(current_dim, out_dim))
+    return nn.Sequential(*layers).to(device)
+
+
+def train_one_model(  # noqa: PLR0915
     args: TrainArgs, train_loader: DataLoader, val_loader: DataLoader, device: torch.device
 ) -> tuple[Any, tuple[list[float], list[float]], float]:
     """Train a single model (structured or unstructured).
@@ -212,27 +247,26 @@ def train_one_model(
         A tuple of (model, (train_losses, val_losses), best_val_loss).
     """
     in_dim = next(iter(train_loader))[0].shape[1]
-    act_fn = make_activation(args.activation)
-    layers = []
-    for _ in range(args.hidden_layers):
-        layers.append(nn.Linear(in_dim, args.hidden_size))
-        layers.append(act_fn)
-        in_dim = args.hidden_size
-    layers.append(nn.Linear(in_dim, 1))
-    model = nn.Sequential(*layers).to(device)
+    model = _create_mlp(
+        in_dim=in_dim,
+        hidden_size=args.hidden_size,
+        hidden_layers=args.hidden_layers,
+        activation=args.activation,
+        device=device,
+    )
 
     def train_step(batch_data: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         x_batch, y_batch = batch_data
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
         preds = model(x_batch).squeeze(-1)
-        return f.smooth_l1_loss(preds, y_batch)
+        return F.smooth_l1_loss(preds, y_batch)
 
     def valid_step(batch_data: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         x_batch, y_batch = batch_data
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
-        return f.smooth_l1_loss(model(x_batch).squeeze(-1), y_batch)
+        return F.smooth_l1_loss(model(x_batch).squeeze(-1), y_batch)
 
     opt = make_optimizer(args.optimizer, model.parameters(), lr=args.learning_rate, weight_decay=args.l2_lambda)
     sched = optim.lr_scheduler.ExponentialLR(opt, gamma=args.lr_decay)

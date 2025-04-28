@@ -1,9 +1,3 @@
-# ruff: noqa: TRY003
-# ruff: noqa: TRY301
-# ruff: noqa: PLR0913
-# ruff: noqa: PLR0915
-
-
 """MLP model for tabular data training and evaluation.
 
 This module provides functionality for training and evaluating MLP models on tabular data.
@@ -17,7 +11,6 @@ from dataclasses import dataclass
 from dataclasses import field
 import os
 import random
-import sys
 import time
 from typing import Any, Literal
 
@@ -26,19 +19,15 @@ from engibench.utils.all_problems import BUILTIN_PROBLEMS
 from model_pipeline import DataPreprocessor
 from model_pipeline import ModelPipeline
 import numpy as np
-from sklearn.model_selection import train_test_split
+import numpy.typing as npt
 from sklearn.preprocessing import RobustScaler
 import torch
-from torch import cuda
 from torch.utils.data import DataLoader
 from training_utils import PlainTabularDataset
 from training_utils import train_one_model
 import tyro
 
 import wandb
-
-# Ensure the current directory is in the path (if needed for local imports).
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _parse_list_from_string(value: str, field_name: str) -> list:
@@ -59,8 +48,7 @@ def _parse_list_from_string(value: str, field_name: str) -> list:
         parsed_value = ast.literal_eval(value)
         if isinstance(parsed_value, list):
             return parsed_value
-        else:
-            raise TypeError(f"Expected list for {field_name}")
+        raise TypeError(f"Expected list for {field_name}")  # noqa: TRY301
     except Exception as e:
         raise ValueError(f"Invalid format for {field_name}") from e
 
@@ -103,7 +91,6 @@ class Args:
 
     # ---------------- PREPROCESSING -----------------
     flatten_columns: list[str] = field(default_factory=list)
-    strip_column_spaces: bool = False
     subset_condition: str | None = None
 
     # If you only want certain columns to be used as features, specify them here:
@@ -187,24 +174,22 @@ def get_device(args: Args) -> torch.device:
     """
     if args.device == "mps" and torch.backends.mps.is_available():
         return torch.device("mps")
-    elif args.device == "cuda" and torch.cuda.is_available():
+    if args.device == "cuda" and torch.cuda.is_available():
         return torch.device("cuda")
-    elif args.device == "cpu":
+    if args.device == "cpu":
         return torch.device("cpu")
-    else:
-        raise ValueError(f"Invalid device: {args.device}")
+    raise ValueError(f"Invalid device: {args.device}")
 
 
-
-def scale_data(
-    x_train: np.ndarray,
-    x_val: np.ndarray,
-    x_test: np.ndarray,
-    y_train: np.ndarray,
-    y_val: np.ndarray,
-    y_test: np.ndarray,
+def scale_data(  # noqa: PLR0913
+    x_train: npt.NDArray,
+    x_val: npt.NDArray,
+    x_test: npt.NDArray,
+    y_train: npt.NDArray,
+    y_val: npt.NDArray,
+    y_test: npt.NDArray,
     args: Args,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray, dict[str, Any]]:
     """Scale feature and target data using RobustScaler.
 
     Args:
@@ -262,10 +247,11 @@ def train_ensemble(
     for seed_i in seeds:
         print(f"=== Training model for seed={seed_i} ===")
         torch.manual_seed(seed_i)
-        np.random.seed(seed_i)
         random.seed(seed_i)
-        cuda.deterministic = True
-        cuda.benchmark = False
+        torch.cuda.manual_seed(seed_i)
+        torch.cuda.manual_seed_all(seed_i)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
         model_i, (train_losses_i, val_losses_i), best_val_loss_i = train_one_model(
             args, train_loader, val_loader, device=device
@@ -331,7 +317,7 @@ def evaluate_ensemble(
         wandb.log({"test_mse": mse})
 
 
-def main(args: Args) -> float:
+def main(args: Args) -> float:  # noqa: PLR0915
     """Main function to run the MLP training and evaluation pipeline.
 
     This function orchestrates the entire process:

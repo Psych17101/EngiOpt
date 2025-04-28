@@ -1,7 +1,3 @@
-# ruff: noqa: TRY003
-# ruff: noqa: TRY301
-# ruff: noqa: PLR0913
-# ruff: noqa: PLR0915
 """Bayesian hyper-parameter optimisation for the MLP-Tabular surrogate.
 
 This script wraps the Ax `optimize` helper so it can be run entirely from the
@@ -30,11 +26,6 @@ from typing import Any, Literal
 from ax import optimize
 from mlp_tabular_only import Args as TrainArgs
 from mlp_tabular_only import main as train_main
-
-# -----------------------------------------------------------------------------
-# Local imports - we alias package modules so that `mlp_tabular_only` can
-# `import model_pipeline` etc. exactly as if it were run at the project root.
-# -----------------------------------------------------------------------------
 import tyro
 
 # -----------------------------------------------------------------------------
