@@ -6,7 +6,6 @@ It includes data preprocessing, model training, and evaluation capabilities.
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 from dataclasses import field
 import os
@@ -23,60 +22,14 @@ import torch
 from torch.utils.data import DataLoader
 import tyro
 
+from engiopt.args_utils import _parse_list_from_single_item_list
+from engiopt.args_utils import _parse_list_from_string
 from engiopt.surrogate_model.model_pipeline import DataPreprocessor
 from engiopt.surrogate_model.model_pipeline import ModelPipeline
 from engiopt.surrogate_model.training_utils import get_device
 from engiopt.surrogate_model.training_utils import PlainTabularDataset
 from engiopt.surrogate_model.training_utils import train_one_model
 import wandb
-
-
-def _parse_list_from_string(value: str, field_name: str) -> list:
-    """Parse a string representation of a list into an actual list.
-
-    Args:
-        value: The string to parse.
-        field_name: The name of the field being parsed (for error messages).
-
-    Returns:
-        list: The parsed list.
-
-    Raises:
-        TypeError: If the parsed value is not a list.
-        ValueError: If the string cannot be parsed.
-    """
-    try:
-        parsed_value = ast.literal_eval(value)
-        if isinstance(parsed_value, list):
-            return parsed_value
-        raise TypeError(f"Expected list for {field_name}")  # noqa: TRY301
-    except Exception as e:
-        raise ValueError(f"Invalid format for {field_name}") from e
-
-
-def _parse_list_from_single_item_list(value_list: list, field_name: str) -> list:
-    """Parse a list containing a single string item that might be a string representation of a list.
-
-    Args:
-        value_list: A list containing a single string item.
-        field_name: The name of the field being parsed (for error messages).
-
-    Returns:
-        list: The parsed list or the original list if parsing is not needed.
-    """
-    if not value_list or not isinstance(value_list[0], str):
-        return value_list
-
-    first = value_list[0].strip()
-    if first and first[0] in ("[", "{"):
-        try:
-            parsed_value = ast.literal_eval(first)
-            if isinstance(parsed_value, list):
-                return parsed_value
-        except Exception as e:
-            raise ValueError(f"Invalid format for {field_name}") from e
-
-    return value_list
 
 
 @dataclass
@@ -141,7 +94,7 @@ class Args:
     wandb_entity: str | None = None
     seed: int = 42
     n_ensembles: int = 1
-    algo: str = "mlp_tabular"
+    algo: str = os.path.basename(__file__)[: -len(".py")]
     save_model: bool = False
     model_output_dir: str = "results"
     test_model: bool = False
@@ -236,12 +189,7 @@ def train_ensemble(
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-        model_i, (train_losses_i, val_losses_i), best_val_loss_i = train_one_model(
-            args, train_loader, val_loader, device=device
-        )
-        if args.track:
-            for epoch_idx, (tr_loss, va_loss) in enumerate(zip(train_losses_i, val_losses_i)):
-                wandb.log({"train_loss": tr_loss, "val_loss": va_loss, "epoch": epoch_idx, "seed": seed_i})
+        model_i, best_val_loss_i = train_one_model(args, train_loader, val_loader, device=device)
         ensemble_models.append(model_i)
         ensemble_val_losses.append(best_val_loss_i)
     return ensemble_models, ensemble_val_losses, seeds
@@ -323,7 +271,7 @@ def main(args: Args) -> float:  # noqa: PLR0915
     df_val = problem.dataset["val"].to_pandas()
     df_test = problem.dataset["test"].to_pandas()
 
-    run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.problem_id}__{args.algo}__{args.target_col}__{args.seed}__{int(time.time())}"
 
     if args.track:
         wandb.init(

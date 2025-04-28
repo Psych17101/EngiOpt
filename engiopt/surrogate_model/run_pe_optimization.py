@@ -33,11 +33,11 @@ import pandas as pd
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
-import torch
 import tyro
 
 from engiopt.surrogate_model.model_pipeline import ModelPipeline
-from engiopt.surrogate_model.pymoo_pe_problem import MyPowerElecProblem
+from engiopt.surrogate_model.pymoo_pe_problem import PymooPowerElecProblem
+from engiopt.surrogate_model.training_utils import get_device
 import wandb
 
 if TYPE_CHECKING:
@@ -51,8 +51,8 @@ if TYPE_CHECKING:
 @dataclass
 class Args:
     # Surrogate pipelines
-    model_gain_path: str = "my_entity/engiopt/your_run_name_model:latest"
-    model_ripple_path: str = "my_entity/engiopt/your_other_run_name_model:latest"
+    model_gain_path: str = "engibench/engiopt/pe_gain_model:latest"
+    model_ripple_path: str = "engibench/engiopt/pe_ripple_model:latest"
 
     # Optimisation hyperparameters
     pop_size: int = 500
@@ -64,28 +64,13 @@ class Args:
 
     # Logging / I/O
     track: bool = True
-    wandb_project: str = "engiopt"
-    wandb_entity: str | None = None
-    wandb_run_name: str | None = None
+    wandb_project: str = "engibench"
+    wandb_entity: str | None = "engiopt"
     output_dir: str = "results"
     save_csv: bool = True
     log_every: int = 1  # gens between logs
-    algo: str = "moo_ga"
+    algo: str = os.path.basename(__file__)[: -len(".py")]
     problem_id: str = "power_electronics"
-
-
-# ---------------------------------------------------------------------------
-#  Helpers
-# ---------------------------------------------------------------------------
-def get_device(name: str) -> torch.device:
-    """Return the appropriate torch.device for the given name."""
-    if name == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    if name == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    if name == "cpu":
-        return torch.device("cpu")
-    raise ValueError(f"Invalid or unavailable device '{name}'")
 
 
 # -------------------------   W&B callback  ------------------------------
@@ -183,6 +168,23 @@ def save_front(res: Result, output_dir: str) -> tuple[str, str, str, str, str]:
     return evals_csv, designs_csv, pareto_csv, evals_txt, designs_txt
 
 
+def load_model_from_wandb(artifact_path: str, run) -> ModelPipeline:
+    """Load a model pipeline from a W&B artifact.
+
+    Args:
+        artifact_path: Path to the W&B artifact.
+        run: Active W&B run to use for downloading the artifact.
+
+    Returns:
+        Loaded model pipeline.
+    """
+    artifact = run.use_artifact(artifact_path, type="model")
+    artifact_dir = artifact.download()
+    # Find the .pkl file in the directory (assuming exactly one)
+    model_file = next(f for f in os.listdir(artifact_dir) if f.endswith(".pkl"))
+    return ModelPipeline.load(os.path.join(artifact_dir, model_file))
+
+
 # ---------------------------------------------------------------------------
 #  Main
 # ---------------------------------------------------------------------------
@@ -205,18 +207,11 @@ def main(args: Args) -> None:
 
     # load models from weights and biases
     assert wandb.run is not None, f"W&B run not found for run_name={run_name} in {args.wandb_entity}/{args.wandb_project}"
-    gain_art = wandb.run.use_artifact(args.model_gain_path, type="model")
-    gain_dir = gain_art.download()
-    # find the .pkl inside that dir (we assume there's exactly one)
-    gain_file = next(f for f in os.listdir(gain_dir) if f.endswith(".pkl"))
-    pipeline_g = ModelPipeline.load(os.path.join(gain_dir, gain_file))
+    # Load both models using the helper function
+    pipeline_g = load_model_from_wandb(args.model_gain_path, wandb.run)
+    pipeline_r = load_model_from_wandb(args.model_ripple_path, wandb.run)
 
-    ripple_art = wandb.run.use_artifact(args.model_ripple_path, type="model")
-    ripple_dir = ripple_art.download()
-    ripple_file = next(f for f in os.listdir(ripple_dir) if f.endswith(".pkl"))
-    pipeline_r = ModelPipeline.load(os.path.join(ripple_dir, ripple_file))
-
-    problem = MyPowerElecProblem(
+    problem = PymooPowerElecProblem(
         pipeline_r=pipeline_r,
         pipeline_g=pipeline_g,
         device=device,

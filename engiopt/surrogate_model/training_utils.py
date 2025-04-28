@@ -11,6 +11,8 @@ import torch.nn.functional as F  # noqa: N812
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 
+import wandb
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -215,7 +217,7 @@ def _create_mlp(  # noqa: PLR0913
 
 def train_one_model(  # noqa: PLR0915
     args: Args, train_loader: DataLoader, val_loader: DataLoader, device: torch.device
-) -> tuple[Any, tuple[list[float], list[float]], float]:
+) -> tuple[Any, float]:
     """Train a single model (structured or unstructured).
 
     Args:
@@ -228,7 +230,7 @@ def train_one_model(  # noqa: PLR0915
         device: The device to train the model on (CPU, CUDA, or MPS).
 
     Returns:
-        A tuple of (model, (train_losses, val_losses), best_val_loss).
+        A tuple of (model, best_val_loss).
     """
     in_dim = next(iter(train_loader))[0].shape[1]
     model = _create_mlp(
@@ -259,8 +261,6 @@ def train_one_model(  # noqa: PLR0915
     best_epoch = 0
     epochs_no_improve = 0
     best_weights = None
-    train_losses: list[float] = []
-    val_losses: list[float] = []
 
     for epoch in range(args.n_epochs):
         model.train()
@@ -274,7 +274,6 @@ def train_one_model(  # noqa: PLR0915
             opt.step()
             running_train_loss += loss.item() * batch_size_
         epoch_train_loss = running_train_loss / n_train
-        train_losses.append(epoch_train_loss)
 
         model.eval()
         running_val_loss = 0.0
@@ -285,7 +284,6 @@ def train_one_model(  # noqa: PLR0915
                 batch_size_ = len(batch_data[0])
                 running_val_loss += loss_val.item() * batch_size_
         epoch_val_loss = running_val_loss / n_val
-        val_losses.append(epoch_val_loss)
 
         if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss
@@ -299,6 +297,9 @@ def train_one_model(  # noqa: PLR0915
             sched.step()
 
         print(f"[Epoch {epoch + 1}/{args.n_epochs}] Train: {epoch_train_loss:.4f}, Val: {epoch_val_loss:.4f}")
+        if args.track:
+            # Seed is tracked to distinguish between different runs of the same model in the ensemble
+            wandb.log({"train_loss": epoch_train_loss, "val_loss": epoch_val_loss, "epoch": epoch, "seed": args.seed})
         if epochs_no_improve >= args.patience:
             print("Early stopping triggered.")
             break
@@ -306,4 +307,4 @@ def train_one_model(  # noqa: PLR0915
     print(f"Best Val Loss: {best_val_loss:.4f} at epoch {best_epoch + 1}")
     if best_weights is not None:
         model.load_state_dict(best_weights)
-    return model, (train_losses, val_losses), best_val_loss
+    return model, best_val_loss

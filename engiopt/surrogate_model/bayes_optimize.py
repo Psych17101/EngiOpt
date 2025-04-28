@@ -8,8 +8,8 @@ parameters live in :class:`OptArgs` below.
 
 Example:
 -------
->>> python -m engiopt.surrogate_model.bayes_optimize \
-        --huggingface_repo IDEALLab/power_electronics_v0 \
+>>> python engiopt/surrogate_model/bayes_optimize.py \
+        --problem_id power_electronics \
         --target_col Voltage_Ripple \
         --total_trials 100 \
         --device mps
@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 import json
+import os
+from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from ax import optimize
@@ -30,7 +32,6 @@ from engiopt.surrogate_model.mlp_tabular_only import main as train_main
 
 if TYPE_CHECKING:
     from pathlib import Path
-
 # -----------------------------------------------------------------------------
 # Search-space & optimisation definition
 # -----------------------------------------------------------------------------
@@ -47,40 +48,63 @@ class OptArgs:
 
     # ---------------- DATA / PROBLEM -----------------
     problem_id: str = "power_electronics"
+    """Problem ID from engibench."""
     target_col: str = "Voltage_Ripple"
+    """Target column to optimise."""
     params_cols: list[str] = field(
         default_factory=lambda: [
             *(f"initial_design_{i}" for i in range(10)),
         ]
     )
     flatten_columns: list[str] = field(default_factory=lambda: ["initial_design"])
+    """Columns to flatten."""
 
     # ---------------- TRAINING CONSTANTS -------------
     n_epochs: int = 50
+    """Number of training epochs."""
     patience: int = 40
+    """Number of epochs to wait before early stopping."""
     n_ensembles: int = 1
-    seed: int = 18
+    """Number of ensembles to train."""
+    seed: int = 42
+    """Random seed."""
     track: bool = True
+    """Whether to track the experiment in Weights & Biases."""
     wandb_project: str = "engiopt"
+    """Wandb project name."""
     wandb_entity: str = "engibench"
+    """Wandb entity."""
     log_target: bool = True
+    """Whether to apply log-transform to the target."""
     scale_target: bool = True
+    """Whether to scale the target."""
     device: Literal["cpu", "cuda", "mps"] = "cpu"
+    """Device to run the training on."""
     test_model: bool = True
+    """Whether to test the model."""
     save_model: bool = True
+    """Whether to save the model."""
     model_output_dir: str = "my_models"
 
     # ---------------- AX OPTIMISER -------------------
     total_trials: int = 50
+    """Number of trials to run."""
     minimise: bool = True
+    """Whether to minimise the objective."""
 
     # Search-space - overridable so you do *not* have to touch code to tinker.
     learning_rate_bounds: tuple[float, float] = (1e-5, 1e-3)
+    """Learning rate bounds."""
     hidden_layers_choices: list[int] = field(default_factory=lambda: [2, 3, 4, 5])
+    """Hidden layers choices."""
     hidden_size_choices: list[int] = field(default_factory=lambda: [16, 32, 64, 128, 256])
+    """Hidden size choices."""
     batch_size_choices: list[int] = field(default_factory=lambda: [8, 16, 32, 64, 128])
+    """Batch size choices."""
     l2_lambda_bounds: tuple[float, float] = (1e-6, 1e-3)
+    """L2 lambda bounds."""
     activation_choices: list[str] = field(default_factory=lambda: ["relu", "tanh"])
+    """Activation choices."""
 
     # ---------------- HOUSEKEEPING -------------------
     results_path: Path | None = None  # If set, dump best-config JSON here.
@@ -95,6 +119,7 @@ def _train_and_eval(hparams: dict[str, Any], fixed: OptArgs) -> float:
     """Instantiate :class:`TrainArgs` from *fixed* values and `hparams`."""
     train_args = Args(
         # Static values - pulled from the user-supplied OptArgs ----------------
+        algo=os.path.basename(__file__)[: -len(".py")],
         problem_id=fixed.problem_id,
         target_col=fixed.target_col,
         log_target=fixed.log_target,
@@ -188,10 +213,6 @@ def optimise(opt_args: OptArgs) -> None:
             json.dump({"best_parameters": best_params, "best_values": best_vals}, fp, indent=2)
         print(f"[INFO] Wrote best configuration to {opt_args.results_path}")
 
-
-# -----------------------------------------------------------------------------
-# CLI entry-point
-# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     cli_args = tyro.cli(OptArgs)
