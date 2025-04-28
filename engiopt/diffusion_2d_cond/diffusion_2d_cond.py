@@ -215,14 +215,14 @@ class DiffusionSampler:
 
         Applies noise to this image, if we are not in the last step yet.
         """
-        model.eval()  # type: ignore[attr-defined]
+        model.eval()
         with th.no_grad():
             betas_t = get_index_from_list(self.betas, t, x.shape)
             sqrt_one_minus_alphas_cumprod_t = get_index_from_list(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
             sqrt_recip_alphas_t = get_index_from_list(self.sqrt_recip_alphas, t, x.shape)
 
             # Call model (current image - noise prediction)
-            noise_pred = model(x, t, encoder_hidden_states).sample  # type: ignore[operator]
+            noise_pred = model(x, t, encoder_hidden_states).sample
             model_mean = sqrt_recip_alphas_t * (x - betas_t * noise_pred / sqrt_one_minus_alphas_cumprod_t)
 
             posterior_variance_t = get_index_from_list(self.posterior_variance, t, x.shape)
@@ -280,7 +280,7 @@ if __name__ == "__main__":
         only_cross_attention=True,
     )
 
-    model.to(device)  # type: ignore[attr-defined]
+    model.to(device)
     adversarial_loss.to(device)
 
     # Configure data loader
@@ -342,7 +342,7 @@ if __name__ == "__main__":
     @th.no_grad()
     def sample_designs(model: UNet2DConditionModel, n_designs: int = 25) -> tuple[th.Tensor, th.Tensor]:
         """Samples n_designs designs."""
-        model.eval()  # type: ignore[attr-defined]
+        model.eval()
         with th.no_grad():
             dims = (n_designs, 1, design_shape[0], design_shape[1])
             steps = th.linspace(0, 1, n_designs, device=device).view(n_designs, 1, 1)
@@ -374,7 +374,7 @@ if __name__ == "__main__":
             # Get the noise and the noisy input
             x_noisy, noise = ddm_sampler.forward_diffusion_sample(x, t, device)
 
-            noise_pred = model(x_noisy, t, encoder_hidden_states).sample  # type: ignore[operator]
+            noise_pred = model(x_noisy, t, encoder_hidden_states).sample
             loss = ddm_loss_fn(noise_pred, noise)
 
             # Backpropagation
@@ -431,7 +431,7 @@ if __name__ == "__main__":
                     ckpt_model = {
                         "epoch": epoch,
                         "batches_done": batches_done,
-                        "model": model.state_dict(),  # type: ignore[attr-defined]
+                        "model": model.state_dict(),
                         "optimizer_generator": optimizer.state_dict(),
                         "loss": loss.item(),
                     }
