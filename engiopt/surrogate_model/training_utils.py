@@ -106,50 +106,6 @@ def make_optimizer(
     return OPTIMIZERS[name](params, lr=lr, weight_decay=weight_decay)
 
 
-class Shape2ShapeWithParamsDataset(Dataset):
-    """Dataset for structured shape data with parameters and target values."""
-
-    def __init__(
-        self,
-        init_array: np.ndarray,
-        opt_array: np.ndarray,
-        params_array: np.ndarray,
-        cl_array: np.ndarray,
-    ) -> None:
-        """Initialize the dataset.
-
-        Args:
-            init_array: Initial shape array.
-            opt_array: Optimized shape array.
-            params_array: Parameters array.
-            cl_array: Target values array.
-
-        Raises:
-            ValueError: If init_design and opt_design have different dimensions.
-        """
-        super().__init__()
-        self.X_init = torch.from_numpy(init_array).float()
-        self.X_opt = torch.from_numpy(opt_array).float()
-        self.params = torch.from_numpy(params_array).float()
-        self.y = torch.from_numpy(cl_array).float()
-        if self.X_init.shape[1] != self.X_opt.shape[1]:
-            raise ValueError("init_design and opt_design dimensions must match")
-
-    def __len__(self) -> int:
-        """Return the number of samples in the dataset."""
-        return len(self.X_init)
-
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Get a sample from the dataset.
-
-        Args:
-            idx: Index of the sample.
-
-        Returns:
-            A tuple of (initial shape, optimized shape, parameters, target value).
-        """
-        return self.X_init[idx], self.X_opt[idx], self.params[idx], self.y[idx]
-
 
 class PlainTabularDataset(Dataset):
     """Dataset for plain tabular data (no shape columns)."""
