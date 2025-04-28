@@ -15,8 +15,8 @@ jobs:
       - uses: astral-sh/ruff-action@v3
         with:
           args: "--version"
-      # - run: ruff check --output-format=github .
       - run: ruff format --check
+      - run: ruff check --output-format=github .
 
   mypy:
     runs-on: ubuntu-latest
