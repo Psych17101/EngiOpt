@@ -408,7 +408,7 @@ if __name__ == "__main__":
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
 
     bezier_control_pts = args.bezier_control_pts
-    coords_space: spaces.Box = problem.design_space["coords"]  # type: ignore  # noqa: PGH003
+    coords_space: spaces.Box = problem.design_space["coords"]  # type: ignore[union-attr]
     n_data_points = coords_space.shape[1]
 
     generator = Generator(
