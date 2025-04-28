@@ -25,6 +25,7 @@ import tyro
 
 from engiopt.surrogate_model.model_pipeline import DataPreprocessor
 from engiopt.surrogate_model.model_pipeline import ModelPipeline
+from engiopt.surrogate_model.training_utils import get_device
 from engiopt.surrogate_model.training_utils import PlainTabularDataset
 from engiopt.surrogate_model.training_utils import train_one_model
 import wandb
@@ -161,24 +162,6 @@ class Args:
             self.params_cols = _parse_list_from_string(self.params_cols, "--params_cols")
         elif isinstance(self.params_cols, list) and len(self.params_cols) == 1:
             self.params_cols = _parse_list_from_single_item_list(self.params_cols, "--params_cols")
-
-
-def get_device(args: Args) -> torch.device:
-    """Determine the best available device for PyTorch operations.
-
-    Returns:
-        torch.device: The device to use for PyTorch operations, prioritizing:
-            1. MPS (Metal Performance Shaders) for Apple Silicon
-            2. CUDA for NVIDIA GPUs
-            3. CPU as fallback
-    """
-    if args.device == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    if args.device == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    if args.device == "cpu":
-        return torch.device("cpu")
-    raise ValueError(f"Invalid device: {args.device}")
 
 
 def scale_data(  # noqa: PLR0913

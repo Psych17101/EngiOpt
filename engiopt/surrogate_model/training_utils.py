@@ -33,6 +33,7 @@ class TrainArgs(Protocol):
     lr_decay_step: int
     patience: int
     l2_lambda: float
+    device: str
 
 
 # Dictionaries for activation & optimizer

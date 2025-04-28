@@ -280,5 +280,9 @@ module = [
     "networkx",
     "autograd",
     "autograd.*",
+    "pymoo",
+    "pymoo.*",
+    "sklearn",
+    "sklearn.*",
 ]
 ignore_missing_imports = true
