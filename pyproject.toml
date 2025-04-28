@@ -284,5 +284,7 @@ module = [
     "pymoo.*",
     "sklearn",
     "sklearn.*",
+    "ax",
+    "ax.*",
 ]
 ignore_missing_imports = true

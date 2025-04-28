@@ -145,7 +145,7 @@ class DataPreprocessor:
             else:
                 param_df = self._apply_params_inference(df_processed, param_cols)
             params = param_df.to_numpy() if len(param_df.columns) > 0 else np.empty((len(df_processed), 0))
-            return {"x_init": x_init, "x_opt": x_opt, "params": params}, df_processed
+            return {"x_init": x_init, "x_opt": x_opt, "params": params}, df_processed  # type: ignore  # noqa: PGH003
         # Unstructured mode
         if fit_params:
             param_df = self._split_params_with_onehot(df_processed, param_cols)
@@ -456,7 +456,7 @@ class ModelPipeline:
             if x_init_tensor is not None:
                 x_init_batch = x_init_tensor[start:end].to(device)
 
-            ensemble_preds = []
+            ensemble_preds_list: list[torch.Tensor] = []
             for model in self.models:
                 with torch.no_grad():
                     if self.structured:
@@ -464,9 +464,9 @@ class ModelPipeline:
                         pred = cl_pred.view(-1)
                     else:
                         pred = model(param_batch).view(-1)
-                ensemble_preds.append(pred)
+                ensemble_preds_list.append(pred)
 
-            ensemble_preds = torch.stack(ensemble_preds, dim=0)
+            ensemble_preds = torch.stack(ensemble_preds_list, dim=0)
             batch_mean = ensemble_preds.mean(dim=0)
             all_preds.append(batch_mean.cpu().numpy())
 

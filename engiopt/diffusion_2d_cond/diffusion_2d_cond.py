@@ -215,16 +215,15 @@ class DiffusionSampler:
 
         Applies noise to this image, if we are not in the last step yet.
         """
-        model.eval()
+        model.eval()  # type: ignore[attr-defined]
         with th.no_grad():
             betas_t = get_index_from_list(self.betas, t, x.shape)
             sqrt_one_minus_alphas_cumprod_t = get_index_from_list(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
             sqrt_recip_alphas_t = get_index_from_list(self.sqrt_recip_alphas, t, x.shape)
 
             # Call model (current image - noise prediction)
-            model_mean = sqrt_recip_alphas_t * (
-                x - betas_t * model(x, t, encoder_hidden_states).sample / sqrt_one_minus_alphas_cumprod_t
-            )
+            noise_pred = model(x, t, encoder_hidden_states).sample  # type: ignore[operator]
+            model_mean = sqrt_recip_alphas_t * (x - betas_t * noise_pred / sqrt_one_minus_alphas_cumprod_t)
 
             posterior_variance_t = get_index_from_list(self.posterior_variance, t, x.shape)
             if t_mask is None:
@@ -264,7 +263,7 @@ if __name__ == "__main__":
         device = th.device("cpu")
 
     # Loss function
-    adversarial_loss = th.nn.MSELoss()
+    adversarial_loss: th.nn.Module = th.nn.MSELoss()
     encoder_hid_dim = len(problem.conditions)
     # Initialize UNet from Huggingface
     model = UNet2DConditionModel(
@@ -281,7 +280,7 @@ if __name__ == "__main__":
         only_cross_attention=True,
     )
 
-    model.to(device)
+    model.to(device)  # type: ignore[attr-defined]
     adversarial_loss.to(device)
 
     # Configure data loader
@@ -307,7 +306,7 @@ if __name__ == "__main__":
     num_timesteps = args.num_timesteps
 
     # Training loop
-    optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)
+    optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)  # type: ignore[attr-defined]
 
     ## Schedule Parameters
     start = 1e-4  # Starting variance
@@ -343,7 +342,7 @@ if __name__ == "__main__":
     @th.no_grad()
     def sample_designs(model: UNet2DConditionModel, n_designs: int = 25) -> tuple[th.Tensor, th.Tensor]:
         """Samples n_designs designs."""
-        model.eval()
+        model.eval()  # type: ignore[attr-defined]
         with th.no_grad():
             dims = (n_designs, 1, design_shape[0], design_shape[1])
             steps = th.linspace(0, 1, n_designs, device=device).view(n_designs, 1, 1)
@@ -375,7 +374,7 @@ if __name__ == "__main__":
             # Get the noise and the noisy input
             x_noisy, noise = ddm_sampler.forward_diffusion_sample(x, t, device)
 
-            noise_pred = model(x_noisy, t, encoder_hidden_states).sample
+            noise_pred = model(x_noisy, t, encoder_hidden_states).sample  # type: ignore[operator]
             loss = ddm_loss_fn(noise_pred, noise)
 
             # Backpropagation
@@ -432,7 +431,7 @@ if __name__ == "__main__":
                     ckpt_model = {
                         "epoch": epoch,
                         "batches_done": batches_done,
-                        "model": model.state_dict(),
+                        "model": model.state_dict(),  # type: ignore[attr-defined]
                         "optimizer_generator": optimizer.state_dict(),
                         "loss": loss.item(),
                     }

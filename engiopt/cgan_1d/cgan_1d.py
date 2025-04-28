@@ -136,7 +136,7 @@ if __name__ == "__main__":
         design_shape = problem.design_space.shape
     else:
         dummy_design, _ = problem.random_design()
-        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
+        design_shape = spaces.flatten(problem.design_space, dummy_design).shape  # type: ignore[union-attr]
     conditions = problem.conditions
     n_conds = len(conditions)
 
@@ -288,7 +288,7 @@ if __name__ == "__main__":
                         # use problem's render method to get the image
                         fig, ax = problem.render(design)
                         ax.figure.canvas.draw()
-                        img = np.array(fig.canvas.renderer.buffer_rgba())
+                        img = np.array(fig.canvas.renderer.buffer_rgba())  # type: ignore[attr-defined]
                         axes[j].imshow(img)
                         title = [(conditions[i][0], f"{dc[i]:.2f}") for i in range(n_conds)]
                         title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)

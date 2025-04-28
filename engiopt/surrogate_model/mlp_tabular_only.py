@@ -262,23 +262,22 @@ def evaluate_ensemble(
     Returns:
         None: Prints evaluation metrics and logs them to wandb if tracking is enabled.
     """
-    predictions_list = []
-    truths_list = []
+    predictions_list: list[npt.NDArray] = []
+    truths_list: list[npt.NDArray] = []
     for model_e in ensemble_models:
         model_e.eval()
-        preds_e = []
-        trues_e = []
+        preds_e_list: list[npt.NDArray] = []
+        trues_e_list: list[npt.NDArray] = []
         with torch.no_grad():
             for x_batch, y_batch in test_loader:
                 x_batch_device = x_batch.to(device)
                 y_batch_device = y_batch.to(device)
                 pred = model_e(x_batch_device).squeeze(-1)
-                preds_e.append(pred.cpu().numpy())
-                trues_e.append(y_batch_device.cpu().numpy())
-        preds_e = np.concatenate(preds_e)
-        trues_e = np.concatenate(trues_e)
-        predictions_list.append(preds_e)
-        truths_list.append(trues_e)
+                preds_e_list.append(pred.cpu().numpy())
+                trues_e_list.append(y_batch_device.cpu().numpy())
+
+        predictions_list.append(np.concatenate(preds_e_list))
+        truths_list.append(np.concatenate(trues_e_list))
     test_trues = truths_list[0]
     all_preds = np.stack(predictions_list, axis=0)
     test_preds_ensemble = np.mean(all_preds, axis=0)

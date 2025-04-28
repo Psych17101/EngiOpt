@@ -25,7 +25,7 @@ from typing import Any, Literal, TYPE_CHECKING
 from ax import optimize
 import tyro
 
-from engiopt.surrogate_model.mlp_tabular_only import Args as TrainArgs
+from engiopt.surrogate_model.mlp_tabular_only import Args
 from engiopt.surrogate_model.mlp_tabular_only import main as train_main
 
 if TYPE_CHECKING:
@@ -54,7 +54,6 @@ class OptArgs:
         ]
     )
     flatten_columns: list[str] = field(default_factory=lambda: ["initial_design"])
-    strip_column_spaces: bool = True
 
     # ---------------- TRAINING CONSTANTS -------------
     n_epochs: int = 50
@@ -94,14 +93,13 @@ class OptArgs:
 
 def _train_and_eval(hparams: dict[str, Any], fixed: OptArgs) -> float:
     """Instantiate :class:`TrainArgs` from *fixed* values and `hparams`."""
-    train_args = TrainArgs(
+    train_args = Args(
         # Static values - pulled from the user-supplied OptArgs ----------------
         problem_id=fixed.problem_id,
         target_col=fixed.target_col,
         log_target=fixed.log_target,
         params_cols=fixed.params_cols,
         flatten_columns=fixed.flatten_columns,
-        strip_column_spaces=fixed.strip_column_spaces,
         n_epochs=fixed.n_epochs,
         patience=fixed.patience,
         n_ensembles=fixed.n_ensembles,
@@ -121,7 +119,7 @@ def _train_and_eval(hparams: dict[str, Any], fixed: OptArgs) -> float:
         hidden_size=int(hparams["hidden_size"]),
         batch_size=int(hparams["batch_size"]),
         l2_lambda=float(hparams["l2_lambda"]),
-        activation=str(hparams["activation"]),
+        activation=str(hparams["activation"]),  # type: ignore[arg-type]
     )
 
     # Delegate to the regular training routine - returns best *val* loss.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 import torch
 from torch import nn
@@ -16,24 +16,7 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-
-# Protocol for training arguments to replace Any.
-class TrainArgs(Protocol):
-    structured: bool
-    latent_dim: int
-    hidden_layers: int
-    hidden_size: int
-    activation: str
-    optimizer: str
-    learning_rate: float
-    lambda_lv: float
-    gamma: float
-    n_epochs: int
-    lr_decay: float
-    lr_decay_step: int
-    patience: int
-    l2_lambda: float
-    device: str
+    from engiopt.surrogate_model.mlp_tabular_only import Args
 
 
 # Dictionaries for activation & optimizer
@@ -64,7 +47,7 @@ OPTIMIZERS: dict[str, Callable] = {
 }
 
 
-def get_device(args: TrainArgs) -> torch.device:
+def get_device(args: Args) -> torch.device:
     """Determine the best available device for PyTorch operations.
 
     Returns:
@@ -218,7 +201,7 @@ def _create_mlp(  # noqa: PLR0913
         A sequential model with the specified architecture.
     """
     act_fn = make_activation(activation)
-    layers = []
+    layers: list[nn.Module] = []
     current_dim = in_dim
 
     for _ in range(hidden_layers):
@@ -231,7 +214,7 @@ def _create_mlp(  # noqa: PLR0913
 
 
 def train_one_model(  # noqa: PLR0915
-    args: TrainArgs, train_loader: DataLoader, val_loader: DataLoader, device: torch.device
+    args: Args, train_loader: DataLoader, val_loader: DataLoader, device: torch.device
 ) -> tuple[Any, tuple[list[float], list[float]], float]:
     """Train a single model (structured or unstructured).
 
@@ -282,7 +265,7 @@ def train_one_model(  # noqa: PLR0915
     for epoch in range(args.n_epochs):
         model.train()
         running_train_loss = 0.0
-        n_train = len(train_loader.dataset)
+        n_train = len(train_loader.dataset)  # type: ignore  # noqa: PGH003
         for batch_data in train_loader:
             opt.zero_grad()
             loss = train_step(batch_data)
@@ -295,7 +278,7 @@ def train_one_model(  # noqa: PLR0915
 
         model.eval()
         running_val_loss = 0.0
-        n_val = len(val_loader.dataset)
+        n_val = len(val_loader.dataset)  # type: ignore  # noqa: PGH003
         with torch.no_grad():
             for batch_data in val_loader:
                 loss_val = valid_step(batch_data)
