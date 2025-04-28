@@ -28,21 +28,16 @@ import os
 import time
 from typing import Literal, TYPE_CHECKING
 
-# ---------------------------------------------------------------------------
-#  Local imports - ensure that the pickled ModelPipeline can be un-pickled
-#  no matter whether it was saved from the top-level model_pipeline module
-#  or from the package path engiopt.model_pipeline.
-# ---------------------------------------------------------------------------
-from model_pipeline import ModelPipeline
 import numpy as np
 import pandas as pd
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
-from pymoo_pe_problem import MyPowerElecProblem
 import torch
 import tyro
 
+from engiopt.surrogate_model.model_pipeline import ModelPipeline
+from engiopt.surrogate_model.pymoo_pe_problem import MyPowerElecProblem
 import wandb
 
 if TYPE_CHECKING:

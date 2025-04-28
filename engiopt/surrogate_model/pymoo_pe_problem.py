@@ -9,8 +9,9 @@ import pandas as pd
 from pymoo.core.problem import ElementwiseProblem
 
 if TYPE_CHECKING:
-    from model_pipeline import ModelPipeline
     import torch
+
+    from engiopt.surrogate_model.model_pipeline import ModelPipeline
 
 
 class MyPowerElecProblem(ElementwiseProblem):

@@ -20,13 +20,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 import json
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 from ax import optimize
-from mlp_tabular_only import Args as TrainArgs
-from mlp_tabular_only import main as train_main
 import tyro
+
+from engiopt.surrogate_model.mlp_tabular_only import Args as TrainArgs
+from engiopt.surrogate_model.mlp_tabular_only import main as train_main
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # -----------------------------------------------------------------------------
 # Search-space & optimisation definition

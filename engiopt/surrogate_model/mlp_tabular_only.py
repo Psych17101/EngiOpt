@@ -16,17 +16,17 @@ from typing import Any, Literal
 
 # Local modules
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
-from model_pipeline import DataPreprocessor
-from model_pipeline import ModelPipeline
 import numpy as np
 import numpy.typing as npt
 from sklearn.preprocessing import RobustScaler
 import torch
 from torch.utils.data import DataLoader
-from training_utils import PlainTabularDataset
-from training_utils import train_one_model
 import tyro
 
+from engiopt.surrogate_model.model_pipeline import DataPreprocessor
+from engiopt.surrogate_model.model_pipeline import ModelPipeline
+from engiopt.surrogate_model.training_utils import PlainTabularDataset
+from engiopt.surrogate_model.training_utils import train_one_model
 import wandb
 
 
