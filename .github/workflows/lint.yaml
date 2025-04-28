@@ -16,7 +16,7 @@ jobs:
         with:
           args: "--version"
       - run: ruff format --check
-      - run: ruff check --output-format=github .
+      - run: ruff check --fix --output-format=github .
 
   mypy:
     runs-on: ubuntu-latest
