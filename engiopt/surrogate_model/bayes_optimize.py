@@ -2,9 +2,12 @@
 
 This script wraps the Ax `optimize` helper so it can be run entirely from the
 command-line -- mirroring the style of `mlp_tabular_only.py`. All static
-training options live in :class:`TrainArgs` (imported from
+training options live in :class:`Args` (imported from
 `engiopt.mlp_tabular_only`), while the search-space and optimisation
 parameters live in :class:`OptArgs` below.
+
+Note that we take the average of the validation loss over the number of seeds
+to get a single scalar value to optimise.
 
 Example:
 -------
@@ -25,6 +28,7 @@ from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from ax import optimize
+import numpy as np
 import tyro
 
 from engiopt.surrogate_model.mlp_tabular_only import Args
@@ -32,9 +36,6 @@ from engiopt.surrogate_model.mlp_tabular_only import main as train_main
 
 if TYPE_CHECKING:
     from pathlib import Path
-# -----------------------------------------------------------------------------
-# Search-space & optimisation definition
-# -----------------------------------------------------------------------------
 
 
 @dataclass
@@ -66,8 +67,10 @@ class OptArgs:
     """Number of epochs to wait before early stopping."""
     n_ensembles: int = 1
     """Number of ensembles to train."""
-    seed: int = 42
+    seed: int = 100
     """Random seed."""
+    num_seeds: int = 3
+    """Number of seeds to run each trial with."""
     track: bool = True
     """Whether to track the experiment in Weights & Biases."""
     wandb_project: str = "engiopt"
@@ -110,51 +113,45 @@ class OptArgs:
     results_path: Path | None = None  # If set, dump best-config JSON here.
 
 
-# -----------------------------------------------------------------------------
-# Helper - wrap training so it can be called by Ax
-# -----------------------------------------------------------------------------
-
-
 def _train_and_eval(hparams: dict[str, Any], fixed: OptArgs) -> float:
-    """Instantiate :class:`TrainArgs` from *fixed* values and `hparams`."""
-    train_args = Args(
-        # Static values - pulled from the user-supplied OptArgs ----------------
-        algo=os.path.basename(__file__)[: -len(".py")],
-        problem_id=fixed.problem_id,
-        target_col=fixed.target_col,
-        log_target=fixed.log_target,
-        params_cols=fixed.params_cols,
-        flatten_columns=fixed.flatten_columns,
-        n_epochs=fixed.n_epochs,
-        patience=fixed.patience,
-        n_ensembles=fixed.n_ensembles,
-        seed=fixed.seed,
-        scale_target=fixed.scale_target,
-        track=fixed.track,
-        wandb_project=fixed.wandb_project,
-        wandb_entity=fixed.wandb_entity,
-        save_model=fixed.save_model,
-        model_output_dir=fixed.model_output_dir,
-        test_model=fixed.test_model,
-        device=fixed.device,
-        # --------------------------------------------------------------------
-        # The actual hyper-parameters under optimisation ----------------------
-        learning_rate=float(hparams["learning_rate"]),
-        hidden_layers=int(hparams["hidden_layers"]),
-        hidden_size=int(hparams["hidden_size"]),
-        batch_size=int(hparams["batch_size"]),
-        l2_lambda=float(hparams["l2_lambda"]),
-        activation=str(hparams["activation"]),  # type: ignore[arg-type]
-    )
+    """Instantiate Args from *fixed* values and `hparams`."""
+    seeds = [fixed.seed + i for i in range(fixed.num_seeds)]
+    vals = []
+    for seed in seeds:
+        train_args = Args(
+            # Static values - pulled from the user-supplied OptArgs ----------------
+            algo=os.path.basename(__file__)[: -len(".py")],
+            problem_id=fixed.problem_id,
+            target_col=fixed.target_col,
+            log_target=fixed.log_target,
+            params_cols=fixed.params_cols,
+            flatten_columns=fixed.flatten_columns,
+            n_epochs=fixed.n_epochs,
+            patience=fixed.patience,
+            n_ensembles=fixed.n_ensembles,
+            seed=seed,
+            scale_target=fixed.scale_target,
+            track=fixed.track,
+            wandb_project=fixed.wandb_project,
+            wandb_entity=fixed.wandb_entity,
+            save_model=fixed.save_model,
+            model_output_dir=fixed.model_output_dir,
+            test_model=fixed.test_model,
+            device=fixed.device,
+            # --------------------------------------------------------------------
+            # The actual hyper-parameters under optimisation ----------------------
+            learning_rate=float(hparams["learning_rate"]),
+            hidden_layers=int(hparams["hidden_layers"]),
+            hidden_size=int(hparams["hidden_size"]),
+            batch_size=int(hparams["batch_size"]),
+            l2_lambda=float(hparams["l2_lambda"]),
+            activation=str(hparams["activation"]),  # type: ignore[arg-type]
+        )
 
-    # Delegate to the regular training routine - returns best *val* loss.
-    best_val = train_main(train_args)
-    return float(best_val)
-
-
-# -----------------------------------------------------------------------------
-# Main driver
-# -----------------------------------------------------------------------------
+        # Delegate to the regular training routine - returns best *val* loss.
+        val_loss = train_main(train_args)
+        vals.append(float(val_loss))
+    return float(np.mean(vals))
 
 
 def optimise(opt_args: OptArgs) -> None:
