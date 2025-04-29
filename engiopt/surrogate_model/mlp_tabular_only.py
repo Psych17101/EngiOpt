@@ -337,7 +337,7 @@ def main(args: Args) -> float:  # noqa: PLR0915
         metadata=pipeline_metadata,
         preprocessor=preprocessor,
     )
-    pipeline_filename = os.path.join(args.model_output_dir, f"final_pipeline_{run_name}_{args.target_col}.pkl")
+    pipeline_filename = os.path.join(args.model_output_dir, f"final_pipeline_{run_name}.pkl")
     if args.save_model:
         pipeline.save(pipeline_filename, device=device)
         print(f"[INFO] Saved pipeline to {pipeline_filename}")
