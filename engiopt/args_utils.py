@@ -3,7 +3,7 @@
 import ast
 
 
-def _parse_list_from_string(value: str, field_name: str) -> list:
+def parse_list_from_string(value: str, field_name: str) -> list:
     """Parse a string representation of a list into an actual list.
 
     Args:
@@ -26,7 +26,7 @@ def _parse_list_from_string(value: str, field_name: str) -> list:
         raise ValueError(f"Invalid format for {field_name}") from e
 
 
-def _parse_list_from_single_item_list(value_list: list, field_name: str) -> list:
+def parse_list_from_single_item_list(value_list: list, field_name: str) -> list:
     """Parse a list containing a single string item that might be a string representation of a list.
 
     Args:

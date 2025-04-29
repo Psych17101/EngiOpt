@@ -193,7 +193,7 @@ def main(args: Args) -> None:
     device = get_device(args.device)
     print(f"[INFO] Device: {device}")
 
-    run_name = args.wandb_run_name or f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
         wandb.init(
             project=args.wandb_project,

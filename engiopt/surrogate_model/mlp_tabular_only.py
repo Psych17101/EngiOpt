@@ -22,8 +22,8 @@ import torch
 from torch.utils.data import DataLoader
 import tyro
 
-from engiopt.args_utils import _parse_list_from_single_item_list
-from engiopt.args_utils import _parse_list_from_string
+from engiopt.args_utils import parse_list_from_single_item_list
+from engiopt.args_utils import parse_list_from_string
 from engiopt.surrogate_model.model_pipeline import DataPreprocessor
 from engiopt.surrogate_model.model_pipeline import ModelPipeline
 from engiopt.surrogate_model.training_utils import get_device
@@ -106,15 +106,15 @@ class Args:
 
         # Process flatten_columns
         if isinstance(self.flatten_columns, str):
-            self.flatten_columns = _parse_list_from_string(self.flatten_columns, "--flatten_columns")
+            self.flatten_columns = parse_list_from_string(self.flatten_columns, "--flatten_columns")
         elif isinstance(self.flatten_columns, list) and len(self.flatten_columns) == 1:
-            self.flatten_columns = _parse_list_from_single_item_list(self.flatten_columns, "--flatten_columns")
+            self.flatten_columns = parse_list_from_single_item_list(self.flatten_columns, "--flatten_columns")
 
         # Process params_cols
         if isinstance(self.params_cols, str):
-            self.params_cols = _parse_list_from_string(self.params_cols, "--params_cols")
+            self.params_cols = parse_list_from_string(self.params_cols, "--params_cols")
         elif isinstance(self.params_cols, list) and len(self.params_cols) == 1:
-            self.params_cols = _parse_list_from_single_item_list(self.params_cols, "--params_cols")
+            self.params_cols = parse_list_from_single_item_list(self.params_cols, "--params_cols")
 
 
 def scale_data(  # noqa: PLR0913
@@ -282,7 +282,7 @@ def main(args: Args) -> float:  # noqa: PLR0915
             name=run_name,
         )
 
-    device = get_device(args)
+    device = get_device(args.device)
     print(f"[INFO] Using device: {device}")
 
     # Preprocess each split

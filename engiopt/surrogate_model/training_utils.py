@@ -49,7 +49,7 @@ OPTIMIZERS: dict[str, Callable] = {
 }
 
 
-def get_device(args: Args) -> torch.device:
+def get_device(device: str) -> torch.device:
     """Determine the best available device for PyTorch operations.
 
     Returns:
@@ -58,13 +58,13 @@ def get_device(args: Args) -> torch.device:
             2. CUDA for NVIDIA GPUs
             3. CPU as fallback
     """
-    if args.device == "mps" and torch.backends.mps.is_available():
+    if device == "mps" and torch.backends.mps.is_available():
         return torch.device("mps")
-    if args.device == "cuda" and torch.cuda.is_available():
+    if device == "cuda" and torch.cuda.is_available():
         return torch.device("cuda")
-    if args.device == "cpu":
+    if device == "cpu":
         return torch.device("cpu")
-    raise ValueError(f"Invalid device: {args.device}")
+    raise ValueError(f"Invalid device: {device}")
 
 
 def make_activation(activation: str) -> nn.Module:
@@ -104,7 +104,6 @@ def make_optimizer(
     if name not in OPTIMIZERS:
         raise ValueError("Unsupported optimizer")
     return OPTIMIZERS[name](params, lr=lr, weight_decay=weight_decay)
-
 
 
 class PlainTabularDataset(Dataset):
@@ -171,7 +170,7 @@ def _create_mlp(  # noqa: PLR0913
     return nn.Sequential(*layers).to(device)
 
 
-def train_one_model(  # noqa: PLR0915
+def train_one_model(  # noqa: PLR0915, C901
     args: Args, train_loader: DataLoader, val_loader: DataLoader, device: torch.device
 ) -> tuple[Any, float]:
     """Train a single model (structured or unstructured).
