@@ -39,7 +39,7 @@ MIN_UNIQUE_FOR_ONEHOT = 5
 class DataPreprocessor:
     """Handles raw data transformations.
 
-    Strips spaces, flattens list columns, applies optional subset filtering,
+    Flattens list columns, applies optional subset filtering,
     nondimensionalization, log-transformations, and processes parameter columns.
     """
 
@@ -367,7 +367,7 @@ class ModelPipeline:
         raw_input: pd.DataFrame,
         batch_size: int = 256,
         device: torch.device | None = None,
-    ) -> np.ndarray:
+    ) -> npt.NDArray:
         """Predicts target values from raw input data using the stored ensemble of models.
 
         Applies the stored DataPreprocessor to transform raw_input, scales parameters,
@@ -442,8 +442,8 @@ class ModelPipeline:
 
     def _run_predictions(
         self, params_tensor: torch.Tensor, x_init_tensor: torch.Tensor | None, batch_size: int, device: torch.device
-    ) -> np.ndarray:
-        """Run predictions on the model ensemble."""
+    ) -> npt.NDArray:
+        """Run averaged predictions from all models in the ensemble."""
         all_preds = []
         num_samples = params_tensor.shape[0]
         n_batches = math.ceil(num_samples / batch_size)
@@ -472,7 +472,7 @@ class ModelPipeline:
 
         return np.concatenate(all_preds, axis=0)
 
-    def _post_process_predictions(self, predictions: np.ndarray) -> np.ndarray:
+    def _post_process_predictions(self, predictions: npt.NDArray) -> npt.NDArray:
         """Apply post-processing to predictions."""
         if "scaler_y" in self.scalers:
             predictions = self.scalers["scaler_y"].inverse_transform(predictions.reshape(-1, 1)).flatten()
@@ -483,7 +483,7 @@ class ModelPipeline:
     def evaluate(
         self,
         raw_input: pd.DataFrame,
-        y_true: np.ndarray,
+        y_true: npt.NDArray,
         batch_size: int = 256,
         device: torch.device | None = None,
         metrics: list[str] | None = None,

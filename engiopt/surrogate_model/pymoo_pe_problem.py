@@ -1,4 +1,4 @@
-"""This module defines the MyPowerElecProblem class for multi-objective optimization using pymoo."""
+"""This module defines the PymooPowerElecProblem class for multi-objective optimization using pymoo."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ if TYPE_CHECKING:
     from engiopt.surrogate_model.model_pipeline import ModelPipeline
 
 
-class MyPowerElecProblem(ElementwiseProblem):
+class PymooPowerElecProblem(ElementwiseProblem):
     def __init__(self, pipeline_r: ModelPipeline, pipeline_g: ModelPipeline, device: torch.device | None = None) -> None:
-        """Initialize the MyPowerElecProblem.
+        """Initialize the PymooPowerElecProblem.
 
         Args:
             pipeline_r: A ModelPipeline instance for predicting r.

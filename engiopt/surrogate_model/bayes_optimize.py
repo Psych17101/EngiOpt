@@ -2,14 +2,17 @@
 
 This script wraps the Ax `optimize` helper so it can be run entirely from the
 command-line -- mirroring the style of `mlp_tabular_only.py`. All static
-training options live in :class:`TrainArgs` (imported from
+training options live in :class:`Args` (imported from
 `engiopt.mlp_tabular_only`), while the search-space and optimisation
 parameters live in :class:`OptArgs` below.
 
+Note that we take the average of the validation loss over the number of seeds
+to get a single scalar value to optimise.
+
 Example:
 -------
->>> python -m engiopt.surrogate_model.bayes_optimize \
-        --huggingface_repo IDEALLab/power_electronics_v0 \
+>>> python engiopt/surrogate_model/bayes_optimize.py \
+        --problem_id power_electronics \
         --target_col Voltage_Ripple \
         --total_trials 100 \
         --device mps
@@ -20,9 +23,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 import json
+import os
+from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from ax import optimize
+import numpy as np
 import tyro
 
 from engiopt.surrogate_model.mlp_tabular_only import Args
@@ -30,10 +36,6 @@ from engiopt.surrogate_model.mlp_tabular_only import main as train_main
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-# -----------------------------------------------------------------------------
-# Search-space & optimisation definition
-# -----------------------------------------------------------------------------
 
 
 @dataclass
@@ -47,32 +49,47 @@ class OptArgs:
 
     # ---------------- DATA / PROBLEM -----------------
     problem_id: str = "power_electronics"
+    """Problem ID from engibench."""
     target_col: str = "Voltage_Ripple"
+    """Target column to optimise."""
     params_cols: list[str] = field(
         default_factory=lambda: [
             *(f"initial_design_{i}" for i in range(10)),
         ]
     )
     flatten_columns: list[str] = field(default_factory=lambda: ["initial_design"])
+    """Columns to flatten."""
 
     # ---------------- TRAINING CONSTANTS -------------
     n_epochs: int = 50
+    """Number of training epochs."""
     patience: int = 40
+    """Number of epochs to wait before early stopping."""
     n_ensembles: int = 1
-    seed: int = 18
+    """Number of ensembles to train."""
+    seed: int = 100
+    """Random seed."""
+    num_seeds: int = 3
+    """Number of seeds to run each trial with."""
     track: bool = True
+    """Whether to track the experiment in Weights & Biases."""
     wandb_project: str = "engiopt"
     wandb_entity: str = "engibench"
     log_target: bool = True
+    """Whether to apply log-transform to the target column."""
     scale_target: bool = True
+    """Whether to scale the target column."""
     device: Literal["cpu", "cuda", "mps"] = "cpu"
+    """Device to run the training on."""
     test_model: bool = True
     save_model: bool = True
     model_output_dir: str = "my_models"
 
     # ---------------- AX OPTIMISER -------------------
     total_trials: int = 50
+    """Number of trials to run."""
     minimise: bool = True
+    """Whether to minimise the objective."""
 
     # Search-space - overridable so you do *not* have to touch code to tinker.
     learning_rate_bounds: tuple[float, float] = (1e-5, 1e-3)
@@ -86,50 +103,45 @@ class OptArgs:
     results_path: Path | None = None  # If set, dump best-config JSON here.
 
 
-# -----------------------------------------------------------------------------
-# Helper - wrap training so it can be called by Ax
-# -----------------------------------------------------------------------------
-
-
 def _train_and_eval(hparams: dict[str, Any], fixed: OptArgs) -> float:
-    """Instantiate :class:`TrainArgs` from *fixed* values and `hparams`."""
-    train_args = Args(
-        # Static values - pulled from the user-supplied OptArgs ----------------
-        problem_id=fixed.problem_id,
-        target_col=fixed.target_col,
-        log_target=fixed.log_target,
-        params_cols=fixed.params_cols,
-        flatten_columns=fixed.flatten_columns,
-        n_epochs=fixed.n_epochs,
-        patience=fixed.patience,
-        n_ensembles=fixed.n_ensembles,
-        seed=fixed.seed,
-        scale_target=fixed.scale_target,
-        track=fixed.track,
-        wandb_project=fixed.wandb_project,
-        wandb_entity=fixed.wandb_entity,
-        save_model=fixed.save_model,
-        model_output_dir=fixed.model_output_dir,
-        test_model=fixed.test_model,
-        device=fixed.device,
-        # --------------------------------------------------------------------
-        # The actual hyper-parameters under optimisation ----------------------
-        learning_rate=float(hparams["learning_rate"]),
-        hidden_layers=int(hparams["hidden_layers"]),
-        hidden_size=int(hparams["hidden_size"]),
-        batch_size=int(hparams["batch_size"]),
-        l2_lambda=float(hparams["l2_lambda"]),
-        activation=str(hparams["activation"]),  # type: ignore[arg-type]
-    )
+    """Instantiate Args from *fixed* values and `hparams`."""
+    seeds = [fixed.seed + i for i in range(fixed.num_seeds)]
+    vals = []
+    for seed in seeds:
+        train_args = Args(
+            # Static values - pulled from the user-supplied OptArgs ----------------
+            algo=os.path.basename(__file__)[: -len(".py")],
+            problem_id=fixed.problem_id,
+            target_col=fixed.target_col,
+            log_target=fixed.log_target,
+            params_cols=fixed.params_cols,
+            flatten_columns=fixed.flatten_columns,
+            n_epochs=fixed.n_epochs,
+            patience=fixed.patience,
+            n_ensembles=fixed.n_ensembles,
+            seed=seed,
+            scale_target=fixed.scale_target,
+            track=fixed.track,
+            wandb_project=fixed.wandb_project,
+            wandb_entity=fixed.wandb_entity,
+            save_model=fixed.save_model,
+            model_output_dir=fixed.model_output_dir,
+            test_model=fixed.test_model,
+            device=fixed.device,
+            # --------------------------------------------------------------------
+            # The actual hyper-parameters under optimisation ----------------------
+            learning_rate=float(hparams["learning_rate"]),
+            hidden_layers=int(hparams["hidden_layers"]),
+            hidden_size=int(hparams["hidden_size"]),
+            batch_size=int(hparams["batch_size"]),
+            l2_lambda=float(hparams["l2_lambda"]),
+            activation=str(hparams["activation"]),  # type: ignore[arg-type]
+        )
 
-    # Delegate to the regular training routine - returns best *val* loss.
-    best_val = train_main(train_args)
-    return float(best_val)
-
-
-# -----------------------------------------------------------------------------
-# Main driver
-# -----------------------------------------------------------------------------
+        # Delegate to the regular training routine - returns best *val* loss.
+        val_loss = train_main(train_args)
+        vals.append(float(val_loss))
+    return float(np.mean(vals))
 
 
 def optimise(opt_args: OptArgs) -> None:
@@ -188,10 +200,6 @@ def optimise(opt_args: OptArgs) -> None:
             json.dump({"best_parameters": best_params, "best_values": best_vals}, fp, indent=2)
         print(f"[INFO] Wrote best configuration to {opt_args.results_path}")
 
-
-# -----------------------------------------------------------------------------
-# CLI entry-point
-# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     cli_args = tyro.cli(OptArgs)
