@@ -28,6 +28,11 @@ cd ../engiopt
 pip install -e .
 ```
 
+## Dashboards
+The integration with WandB allows us to access live dashboards of our runs (on the cluster or not). We also upload the trained models there.
+<img src="imgs/wandb_dasboard.png" alt="WandB dashboards"/>
+
+
 
 
 ## Wishlist
