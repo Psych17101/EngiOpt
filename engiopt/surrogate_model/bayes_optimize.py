@@ -78,7 +78,7 @@ class OptArgs:
     device: Literal["cpu", "cuda", "mps"] = "cpu"
     """Device to run the training on."""
     test_model: bool = True
-    save_model: bool = True
+    save_model: bool = False
     model_output_dir: str = "my_models"
 
     # ---------------- AX OPTIMISER -------------------
