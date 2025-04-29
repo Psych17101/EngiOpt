@@ -24,8 +24,7 @@ from dataclasses import dataclass
 from dataclasses import field
 import json
 import os
-from pathlib import Path
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal
 
 from ax import optimize
 import numpy as np
@@ -33,9 +32,6 @@ import tyro
 
 from engiopt.surrogate_model.mlp_tabular_only import Args
 from engiopt.surrogate_model.mlp_tabular_only import main as train_main
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @dataclass
@@ -100,7 +96,7 @@ class OptArgs:
     activation_choices: list[str] = field(default_factory=lambda: ["relu", "tanh"])
 
     # ---------------- HOUSEKEEPING -------------------
-    results_path: Path | None = None  # If set, dump best-config JSON here.
+    results_path: str | None = None  # If set, dump best-config JSON here.
 
 
 def _train_and_eval(hparams: dict[str, Any], fixed: OptArgs) -> float:
@@ -195,8 +191,9 @@ def optimise(opt_args: OptArgs) -> None:
     print("Metric val :", best_vals)
 
     if opt_args.results_path is not None:
-        opt_args.results_path.parent.mkdir(parents=True, exist_ok=True)
-        with opt_args.results_path.open("w", encoding="utf-8") as fp:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(opt_args.results_path), exist_ok=True)
+        with open(os.path.join(os.path.dirname(opt_args.results_path), "results.json"), "w", encoding="utf-8") as fp:
             json.dump({"best_parameters": best_params, "best_values": best_vals}, fp, indent=2)
         print(f"[INFO] Wrote best configuration to {opt_args.results_path}")
 
