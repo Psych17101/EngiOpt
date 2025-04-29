@@ -74,19 +74,15 @@ class OptArgs:
     track: bool = True
     """Whether to track the experiment in Weights & Biases."""
     wandb_project: str = "engiopt"
-    """Wandb project name."""
     wandb_entity: str = "engibench"
-    """Wandb entity."""
     log_target: bool = True
-    """Whether to apply log-transform to the target."""
+    """Whether to apply log-transform to the target column."""
     scale_target: bool = True
-    """Whether to scale the target."""
+    """Whether to scale the target column."""
     device: Literal["cpu", "cuda", "mps"] = "cpu"
     """Device to run the training on."""
     test_model: bool = True
-    """Whether to test the model."""
     save_model: bool = True
-    """Whether to save the model."""
     model_output_dir: str = "my_models"
 
     # ---------------- AX OPTIMISER -------------------
@@ -97,17 +93,11 @@ class OptArgs:
 
     # Search-space - overridable so you do *not* have to touch code to tinker.
     learning_rate_bounds: tuple[float, float] = (1e-5, 1e-3)
-    """Learning rate bounds."""
     hidden_layers_choices: list[int] = field(default_factory=lambda: [2, 3, 4, 5])
-    """Hidden layers choices."""
     hidden_size_choices: list[int] = field(default_factory=lambda: [16, 32, 64, 128, 256])
-    """Hidden size choices."""
     batch_size_choices: list[int] = field(default_factory=lambda: [8, 16, 32, 64, 128])
-    """Batch size choices."""
     l2_lambda_bounds: tuple[float, float] = (1e-6, 1e-3)
-    """L2 lambda bounds."""
     activation_choices: list[str] = field(default_factory=lambda: ["relu", "tanh"])
-    """Activation choices."""
 
     # ---------------- HOUSEKEEPING -------------------
     results_path: Path | None = None  # If set, dump best-config JSON here.
