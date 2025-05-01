@@ -69,7 +69,7 @@ class Args:
     track: bool = True
     wandb_project: str = "engiopt"
     wandb_entity: str | None = None
-    output_dir: str = "results"
+    output_dir_prefix: str = "results"
     save_csv: bool = True
     log_every: int = 1  # gens between logs
     algo: str = os.path.basename(__file__)[: -len(".py")]
@@ -232,8 +232,8 @@ def main(args: Args) -> None:
     )
 
     if args.save_csv:
-        _, _, _, f_txt, x_txt = save_front(res, args.output_dir)
-        print(f"[INFO] Saved CSV and TXT to {args.output_dir}")
+        _, _, _, f_txt, x_txt = save_front(res, f"{args.output_dir_prefix}_{run_name}")
+        print(f"[INFO] Saved CSV and TXT to {args.output_dir_prefix}_{run_name}")
         if args.track:
             # Only upload the TXT versions as a W&B artifact
             txt_art = wandb.Artifact(f"{run_name}_pareto_txt", type="pymoo_results")
