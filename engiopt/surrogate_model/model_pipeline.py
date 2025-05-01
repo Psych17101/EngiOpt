@@ -389,19 +389,10 @@ class ModelPipeline:
             device = torch.device("cpu")
         self.to_device(device)
 
-        # Process input data
         processed_data = self._process_input_data(raw_input)
-
-        # Scale parameters
         params_scaled = self._scale_parameters(processed_data)
-
-        # Prepare tensors
         params_tensor, x_init_tensor = self._prepare_tensors(processed_data, params_scaled)
-
-        # Run predictions
         predictions = self._run_predictions(params_tensor, x_init_tensor, batch_size, device)
-
-        # Post-process predictions
         return self._post_process_predictions(predictions)
 
     def _process_input_data(self, raw_input: pd.DataFrame) -> dict[str, np.ndarray]:

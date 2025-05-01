@@ -51,21 +51,24 @@ if TYPE_CHECKING:
 @dataclass
 class Args:
     # Surrogate pipelines
-    model_gain_path: str = "engibench/engiopt/pe_gain_model:latest"
-    model_ripple_path: str = "engibench/engiopt/pe_ripple_model:latest"
+    model_gain_path: str
+    """Path to the W&B artifact for the gain model, e.g. "engibench/engiopt/power_electronics__mlp_tabular_only__DcGain__50__1746000531_model:latest"."""
+    model_ripple_path: str
+    """Path to the W&B artifact for the ripple model, e.g. "engibench/engiopt/power_electronics__mlp_tabular_only__Voltage_Ripple__50__1746001046_model:latest"."""
 
     # Optimisation hyperparameters
+    seed: int
+    """Random seed for the optimization, must match the seed used to train the models."""
     pop_size: int = 500
     n_gen: int = 100
-    seed: int = 1
 
     # Hardware
     device: Literal["cpu", "cuda", "mps"] = "cpu"
 
     # Logging / I/O
     track: bool = True
-    wandb_project: str = "engibench"
-    wandb_entity: str | None = "engiopt"
+    wandb_project: str = "engiopt"
+    wandb_entity: str | None = None
     output_dir: str = "results"
     save_csv: bool = True
     log_every: int = 1  # gens between logs
