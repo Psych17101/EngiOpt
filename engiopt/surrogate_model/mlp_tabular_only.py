@@ -344,7 +344,7 @@ def main(args: Args) -> float:  # noqa: PLR0915
         if args.track:
             artifact = wandb.Artifact(f"{run_name}_model", type="model")
             artifact.add_file(pipeline_filename)
-            wandb.log_artifact(artifact)
+            wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
             print("[INFO] Uploaded model artifact to W&B.")
 
     # Evaluate on test set if requested
