@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from engibench.problems.power_electronics.v0 import PowerElectronics
 import numpy as np
 import pandas as pd
 from pymoo.core.problem import ElementwiseProblem
@@ -25,8 +26,9 @@ class PymooPowerElecProblem(ElementwiseProblem):
         """
         # Define the design space:
         # C1, C2, C3, C4, C5, C6, L1, L2, L3, T1
-        xl = np.array([1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 0.0])
-        xu = np.array([2e-5, 2e-5, 2e-5, 2e-5, 2e-5, 2e-5, 1e-3, 1e-3, 1e-3, 0.5])
+        problem = PowerElectronics()
+        xl = np.array(problem.design_space.low[:10])
+        xu = np.array(problem.design_space.high[:10])
         # Two objectives:
         #  f1 = predicted r (minimize)
         #  f2 = |predicted g - 0.25| (minimize)
