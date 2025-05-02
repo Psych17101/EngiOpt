@@ -11,9 +11,11 @@ from hyppo.ksample import MMD
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.io as pio
 from tqdm import tqdm
 import tyro
 
+pio.kaleido.scope.mathjax = None
 DVARS = [f"x{i}" for i in range(10)]
 
 # constant terms for simulation
@@ -126,20 +128,23 @@ def plot_pareto_front(args: Args):
         color="kind",
         color_discrete_map={"Surrogate": blue, "Simulated": red},
         hover_data=DVARS,
-        title="Surrogate vs. Simulated Pareto Front",
+        title="",
         labels={"r": "|DcGain - 0.25|", "abs_g": "Voltage ripple"},
     )
+
+    if violated_ratio > 0.0 or failed_ratio > 0.0:
+        fig.add_annotation(
+            text=f"Simulation failure ratio: {failed_ratio:.1%} ({n_failed} simulations failed).\n Violated ratio: {violated_ratio:.1%} ({n_violated} designs violated at least one constraint).",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=1.05,
+            showarrow=False,
+        )
+
     fig.update_traces(marker={"size": 9, "opacity": 0.8})
-    fig.update_layout(legend={"x": 0.88, "y": 0.98, "title": "Method"}, hovermode="closest")
-    fig.add_annotation(
-        text=f"Simulation failure ratio: {failed_ratio:.1%} ({n_failed} simulations failed).\n Violated ratio: {violated_ratio:.1%} ({n_violated} designs violated at least one constraint).",
-        xref="paper",
-        yref="paper",
-        x=0.5,
-        y=1.05,
-        showarrow=False,
-    )
-    fig.show()
+    fig.update_layout(legend={"x": 0.75, "y": 0.98, "title": "Method"}, hovermode="closest")
+    fig.write_image(os.path.join(args.results_dir, f"pareto_front_{args.seed}.pdf"), engine="kaleido")
 
     # Two-sample MMD² test on valid designs only
     X = df_pred[["r", "abs_g"]].to_numpy()  # noqa: N806

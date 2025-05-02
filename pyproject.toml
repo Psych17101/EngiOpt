@@ -36,6 +36,7 @@ dependencies = [
     "ax-platform >= 0.5",
     "scikit-learn >= 1.6.0",
     "hyppo >= 0.5.0",
+    "kaleido >= 0.2.1",
 ]
 dynamic = ["version"]
 
