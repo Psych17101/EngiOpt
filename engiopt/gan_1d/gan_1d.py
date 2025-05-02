@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import os
 import random
 import time
+from typing import TYPE_CHECKING
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 from gymnasium import spaces
@@ -22,6 +23,9 @@ import tyro
 
 from engiopt.transforms import flatten_dict_factory
 import wandb
+
+if TYPE_CHECKING:
+    from engibench.utils.problem import Problem
 
 
 @dataclass
@@ -64,9 +68,27 @@ class Args:
     """interval between image samples"""
 
 
+class Normalizer:
+    """Normalizes or denormalizes the input tensor."""
+
+    def __init__(self, min_val: th.Tensor, max_val: th.Tensor, eps: float = 1e-7):
+        self.eps = eps
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def normalize(self, x: th.Tensor) -> th.Tensor:
+        """Normalizes the input tensor."""
+        return (x - self.min_val) / (self.max_val - self.min_val + self.eps)
+
+    def denormalize(self, x: th.Tensor) -> th.Tensor:
+        """Denormalizes the input tensor."""
+        return x * (self.max_val - self.min_val + self.eps) + self.min_val
+
+
 class Generator(nn.Module):
-    def __init__(self, latent_dim: int, design_shape: tuple[int, ...]):
+    def __init__(self, latent_dim: int, design_shape: tuple[int, ...], design_normalizer: Normalizer):
         super().__init__()
+        self.design_normalizer = design_normalizer
 
         def block(in_feat: int, out_feat: int, normalize: bool = True) -> list[nn.Module]:  # noqa: FBT001, FBT002
             layers: list[nn.Module] = [nn.Linear(in_feat, out_feat)]
@@ -86,12 +108,13 @@ class Generator(nn.Module):
 
     def forward(self, z: th.Tensor) -> th.Tensor:
         design = self.model(z)
-        return design.view(design.size(0), *design_shape)
+        return self.design_normalizer.denormalize(design.view(design.size(0), *design_shape))
 
 
 class Discriminator(nn.Module):
-    def __init__(self, design_shape: tuple[int, ...]):
+    def __init__(self, design_shape: tuple[int, ...], design_normalizer: Normalizer):
         super().__init__()
+        self.design_normalizer = design_normalizer
 
         self.model = nn.Sequential(
             nn.Linear(int(np.prod(design_shape)), 512),
@@ -104,7 +127,39 @@ class Discriminator(nn.Module):
 
     def forward(self, design: th.Tensor) -> th.Tensor:
         design_flat = design.view(design.size(0), -1)
-        return self.model(design_flat)
+        return self.model(self.design_normalizer.normalize(design_flat))
+
+
+def prepare_data(problem: Problem, device: th.device) -> tuple[th.utils.data.TensorDataset, Normalizer, Normalizer]:
+    """Prepares the data for the generator and discriminator.
+
+    Args:
+        problem (Problem): The problem to prepare the data for.
+        device (th.device): The device to prepare the data on.
+
+    Returns:
+        tuple[th.utils.data.TensorDataset, Normalizer, Normalizer]: The training dataset, condition normalizer, and design normalizer.
+    """
+    # Flatten the designs if they are a Dict
+    training_ds = problem.dataset.with_format("torch", device=device)["train"]
+
+    if isinstance(problem.design_space, spaces.Box):
+        transform = transforms.Lambda(lambda x: x.flatten(1))
+    elif isinstance(problem.design_space, spaces.Dict):
+        transform = flatten_dict_factory(problem, device)
+
+    training_ds = th.utils.data.TensorDataset(
+        transform(training_ds["optimal_design"]),
+        *[training_ds[key] for key in problem.conditions_keys],
+    )
+
+    # Create design normalizer
+    design_tensors = training_ds.tensors[0].T
+    design_min = design_tensors.amin(dim=tuple(range(1, design_tensors.ndim))).to(device)
+    design_max = design_tensors.amax(dim=tuple(range(1, design_tensors.ndim))).to(device)
+    design_normalizer = Normalizer(design_min, design_max)
+
+    return training_ds, design_normalizer
 
 
 if __name__ == "__main__":
@@ -142,26 +197,18 @@ if __name__ == "__main__":
     else:
         device = th.device("cpu")
 
-    # Loss function
-    adversarial_loss = th.nn.BCELoss()
+    # Prepare data
+    training_ds, design_normalizer = prepare_data(problem, device)
 
     # Initialize generator and discriminator
-    generator = Generator(latent_dim=args.latent_dim, design_shape=design_shape)
-    discriminator = Discriminator(design_shape=design_shape)
+    generator = Generator(latent_dim=args.latent_dim, design_shape=design_shape, design_normalizer=design_normalizer)
+    discriminator = Discriminator(design_shape=design_shape, design_normalizer=design_normalizer)
+    # Loss function
+    adversarial_loss = th.nn.BCELoss()
 
     generator.to(device)
     discriminator.to(device)
     adversarial_loss.to(device)
-
-    # Configure data loader
-    training_ds = problem.dataset.with_format("torch", device=device)["train"]
-
-    if isinstance(problem.design_space, spaces.Box):
-        transform = transforms.Lambda(lambda x: x.flatten(1))
-    elif isinstance(problem.design_space, spaces.Dict):
-        transform = flatten_dict_factory(problem, device)
-
-    training_ds = th.utils.data.TensorDataset(transform(training_ds["optimal_design"]))
 
     dataloader = th.utils.data.DataLoader(
         training_ds,

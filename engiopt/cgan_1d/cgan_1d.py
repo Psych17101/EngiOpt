@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import os
 import random
 import time
+from typing import TYPE_CHECKING
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 from gymnasium import spaces
@@ -23,6 +24,26 @@ import tyro
 
 from engiopt.transforms import flatten_dict_factory
 import wandb
+
+if TYPE_CHECKING:
+    from engibench.utils.problem import Problem
+
+
+class Normalizer:
+    """Normalizes or denormalizes the input tensor."""
+
+    def __init__(self, min_val: th.Tensor, max_val: th.Tensor, eps: float = 1e-7):
+        self.eps = eps
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def normalize(self, x: th.Tensor) -> th.Tensor:
+        """Normalizes the input tensor."""
+        return (x - self.min_val) / (self.max_val - self.min_val + self.eps)
+
+    def denormalize(self, x: th.Tensor) -> th.Tensor:
+        """Denormalizes the input tensor."""
+        return x * (self.max_val - self.min_val + self.eps) + self.min_val
 
 
 @dataclass
@@ -66,9 +87,18 @@ class Args:
 
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim: int, n_conds: int, design_shape: tuple[int, ...]):
+    def __init__(
+        self,
+        latent_dim: int,
+        n_conds: int,
+        design_shape: tuple[int, ...],
+        design_normalizer: Normalizer,
+        conds_normalizer: Normalizer,
+    ):
         super().__init__()
         self.design_shape = design_shape  # Store design shape
+        self.design_normalizer = design_normalizer
+        self.conds_normalizer = conds_normalizer
 
         def block(in_feat: int, out_feat: int, *, normalize: bool = True) -> list[nn.Module]:
             layers: list[nn.Module] = [nn.Linear(in_feat, out_feat)]
@@ -96,14 +126,17 @@ class Generator(nn.Module):
         Returns:
             th.Tensor: Generated design tensor.
         """
-        gen_input = th.cat((z, conds), -1)
+        normalized_conds = self.conds_normalizer.normalize(conds)
+        gen_input = th.cat((z, normalized_conds), -1)
         design = self.model(gen_input)
-        return design.view(design.size(0), *self.design_shape)
+        return self.design_normalizer.denormalize(design.view(design.size(0), *self.design_shape))
 
 
 class Discriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, conds_normalizer: Normalizer, design_normalizer: Normalizer):
         super().__init__()
+        self.conds_normalizer = conds_normalizer
+        self.design_normalizer = design_normalizer
 
         self.model = nn.Sequential(
             nn.Linear(int(np.prod(design_shape)) + n_conds, 512),
@@ -120,8 +153,48 @@ class Discriminator(nn.Module):
 
     def forward(self, design: th.Tensor, conds: th.Tensor) -> th.Tensor:
         design_flat = design.view(design.size(0), -1)
-        d_in = th.cat((design_flat, conds), -1)
+        normalized_design = self.design_normalizer.normalize(design_flat)
+        normalized_conds = self.conds_normalizer.normalize(conds)
+        d_in = th.cat((normalized_design, normalized_conds), -1)
         return self.model(d_in)
+
+
+def prepare_data(problem: Problem, device: th.device) -> tuple[th.utils.data.TensorDataset, Normalizer, Normalizer]:
+    """Prepares the data for the generator and discriminator.
+
+    Args:
+        problem (Problem): The problem to prepare the data for.
+        device (th.device): The device to prepare the data on.
+
+    Returns:
+        tuple[th.utils.data.TensorDataset, Normalizer, Normalizer]: The training dataset, condition normalizer, and design normalizer.
+    """
+    # Flatten the designs if they are a Dict
+    training_ds = problem.dataset.with_format("torch", device=device)["train"]
+
+    if isinstance(problem.design_space, spaces.Box):
+        transform = transforms.Lambda(lambda x: x.flatten(1))
+    elif isinstance(problem.design_space, spaces.Dict):
+        transform = flatten_dict_factory(problem, device)
+
+    training_ds = th.utils.data.TensorDataset(
+        transform(training_ds["optimal_design"]),
+        *[training_ds[key] for key in problem.conditions_keys],
+    )
+
+    # Create condition normalizer
+    cond_tensors = th.stack(training_ds.tensors[1:])
+    conds_min = cond_tensors.amin(dim=tuple(range(1, cond_tensors.ndim))).to(device)
+    conds_max = cond_tensors.amax(dim=tuple(range(1, cond_tensors.ndim))).to(device)
+    conds_normalizer = Normalizer(conds_min, conds_max)
+
+    # Create design normalizer
+    design_tensors = training_ds.tensors[0].T
+    design_min = design_tensors.amin(dim=tuple(range(1, design_tensors.ndim))).to(device)
+    design_max = design_tensors.amax(dim=tuple(range(1, design_tensors.ndim))).to(device)
+    design_normalizer = Normalizer(design_min, design_max)
+
+    return training_ds, conds_normalizer, design_normalizer
 
 
 if __name__ == "__main__":
@@ -160,34 +233,30 @@ if __name__ == "__main__":
     else:
         device = th.device("cpu")
 
-    # Loss function
-    adversarial_loss = th.nn.BCELoss()
+    training_ds, conds_normalizer, design_normalizer = prepare_data(problem, device)
 
-    # Initialize generator and discriminator
-    generator = Generator(args.latent_dim, n_conds, design_shape)
-    discriminator = Discriminator()
-
-    generator.to(device)
-    discriminator.to(device)
-    adversarial_loss.to(device)
-
-    # Configure data loader
-    training_ds = problem.dataset.with_format("torch", device=device)["train"]
-
-    if isinstance(problem.design_space, spaces.Box):
-        transform = transforms.Lambda(lambda x: x.flatten(1))
-    elif isinstance(problem.design_space, spaces.Dict):
-        transform = flatten_dict_factory(problem, device)
-
-    training_ds = th.utils.data.TensorDataset(
-        transform(training_ds["optimal_design"]),
-        *[training_ds[key] for key in problem.conditions_keys],
-    )
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
         shuffle=True,
     )
+
+    # Loss function
+    adversarial_loss = th.nn.BCELoss()
+
+    # Initialize generator and discriminator
+    generator = Generator(
+        latent_dim=args.latent_dim,
+        n_conds=n_conds,
+        design_shape=design_shape,
+        design_normalizer=design_normalizer,
+        conds_normalizer=conds_normalizer,
+    )
+    discriminator = Discriminator(conds_normalizer=conds_normalizer, design_normalizer=design_normalizer)
+
+    generator.to(device)
+    discriminator.to(device)
+    adversarial_loss.to(device)
 
     # Optimizers
     optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
@@ -213,7 +282,6 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             designs = data[0]
-
             conds = th.stack((data[1:]), dim=1)
 
             # Adversarial ground truths
