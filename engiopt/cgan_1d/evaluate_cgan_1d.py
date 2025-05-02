@@ -10,11 +10,11 @@ import numpy as np
 import pandas as pd
 import torch as th
 import tyro
-import wandb
 
 from engiopt import metrics
 from engiopt.cgan_1d.cgan_1d import Generator
 from engiopt.dataset_sample_conditions import sample_conditions
+import wandb
 
 
 @dataclasses.dataclass
@@ -33,7 +33,7 @@ class Args:
     """Wandb entity name."""
     n_samples: int = 5
     """Number of generated samples per seed."""
-    sigma: float = 10.0
+    sigma: float = 1.0
     """Kernel bandwidth for MMD and DPP metrics."""
 
 
