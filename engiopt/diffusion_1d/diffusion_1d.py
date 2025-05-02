@@ -47,7 +47,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 1000
+    n_epochs: int = 200
     """number of epochs of training"""
     batch_size: int = 64
     """size of the batches"""
@@ -61,7 +61,7 @@ class Args:
     """interval between image samples"""
     auto_norm: bool = False
     """Automatically normalize the data when learning."""
-    unet_dim: int = 64
+    unet_dim: int = 32
     """Dimensions for the UNET1D"""
     n_channels: int = 1
     """number of input channels for the model"""
@@ -80,7 +80,8 @@ if __name__ == "__main__":
         design_shape = problem.design_space.shape
     else:
         dummy_design, _ = problem.random_design()
-        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
+        flattened = spaces.flatten(problem.design_space, dummy_design)
+        design_shape = np.array(flattened).shape
 
     # Add padding for the UNet (1D requires the input to be divisible by 8)
     padding_size = (8 - design_shape[0] % 8) % 8  # Only pad if needed
@@ -177,7 +178,7 @@ if __name__ == "__main__":
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
                     designs = diffusion.sample(batch_size=25)
-                    if designs.dim() == 3:
+                    if designs.dim() > 2:  # noqa: PLR2004
                         designs = designs.squeeze(1)
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
@@ -188,7 +189,7 @@ if __name__ == "__main__":
                     for j, tensor in enumerate(designs):
                         # Remove padding if needed
                         if padding_size > 0:
-                            tensor = tensor[:-padding_size]
+                            tensor = tensor[:-padding_size]  # noqa: PLW2901
 
                         if isinstance(problem.design_space, spaces.Dict):
                             design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
@@ -198,8 +199,8 @@ if __name__ == "__main__":
                             y_coords = design["coords"][1, :]
                         else:
                             design = tensor.cpu().numpy()
-                            x_coords = design[0, :]
-                            y_coords = design[1, :]
+                            x_coords = design[: len(design) // 2]
+                            y_coords = design[len(design) // 2 :]
 
                         axes[j].scatter(x_coords, y_coords, s=10, alpha=0.7)
                         axes[j].set_xlim(-0.1, 1.1)

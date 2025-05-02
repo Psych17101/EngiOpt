@@ -19,6 +19,7 @@ import torch as th
 from torch import nn
 import torch.nn.functional as f
 import tyro
+
 import wandb
 
 if TYPE_CHECKING:
@@ -554,7 +555,7 @@ if __name__ == "__main__":
             x_fake2, cp2, w2, ub2, _, sf2 = generator(c2, z2, real_conds)
 
             logits_fake2, q_out2 = discriminator(x_fake2, real_conds, sf2)
-            g_loss_base = bce_with_logits(logits_fake2, th.ones_like(logits_fake2, device=device)) * 20
+            g_loss_base = bce_with_logits(logits_fake2, th.ones_like(logits_fake2, device=device)) * 100
             r_loss = compute_r_loss(cp2, w2)
             r_lambda = R_LAMBDA_MAX * min(1.0, epoch / R_FADE_EPOCHS)
 

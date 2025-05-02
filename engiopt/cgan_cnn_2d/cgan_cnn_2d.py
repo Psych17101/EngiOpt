@@ -18,6 +18,7 @@ from torch import nn
 from torchvision import transforms
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -43,7 +44,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 1000
+    n_epochs: int = 200
     """number of epochs of training"""
     batch_size: int = 32
     """size of the batches"""
@@ -372,9 +373,9 @@ if __name__ == "__main__":
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
                         img = tensor.cpu().numpy().reshape(design_shape[0], design_shape[1])  # Extract x and y coordinates
-                        do = desired_conds[j].cpu()
+                        dc = desired_conds[j].cpu()
                         axes[j].imshow(img)  # Scatter plot
-                        title = [(conditions[i][0], f"{do[i]:.2f}") for i in range(n_conds)]
+                        title = [(conditions[i][0], f"{dc[i]:.2f}") for i in range(n_conds)]
                         title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
                         axes[j].title.set_text(title_string)  # Set title
                         axes[j].set_xticks([])  # Hide x ticks

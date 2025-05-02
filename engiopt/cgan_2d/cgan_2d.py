@@ -18,6 +18,7 @@ import torch as th
 from torch import nn
 import tqdm
 import tyro
+
 import wandb
 
 
@@ -25,7 +26,7 @@ import wandb
 class Args:
     """Command-line arguments."""
 
-    problem_id: str = "heatconduction2d"
+    problem_id: str = "beams2d"
     """Problem identifier."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -43,7 +44,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 1000
+    n_epochs: int = 200
     """number of epochs of training"""
     batch_size: int = 64
     """size of the batches"""
