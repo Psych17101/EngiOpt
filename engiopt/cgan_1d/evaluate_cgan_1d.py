@@ -34,7 +34,7 @@ class Args:
     """Wandb entity name."""
     n_samples: int = 5
     """Number of generated samples per seed."""
-    sigma: float = 10.0
+    sigma: float = 1.0
     """Kernel bandwidth for MMD and DPP metrics."""
 
 

@@ -47,7 +47,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 100
+    n_epochs: int = 200
     """number of epochs of training"""
     batch_size: int = 64
     """size of the batches"""
@@ -61,7 +61,7 @@ class Args:
     """interval between image samples"""
     auto_norm: bool = True
     """Automatically normalize the data when learning."""
-    unet_dim: int = 64
+    unet_dim: int = 32
     """Dimensions for the UNET1D"""
     n_channels: int = 1
     """number of input channels for the model"""
@@ -80,8 +80,16 @@ if __name__ == "__main__":
         design_shape = problem.design_space.shape
     else:
         dummy_design, _ = problem.random_design()
-        design_shape = spaces.flatten(problem.design_space, dummy_design).shape
-    print(f"Design shape: {design_shape}")
+        flattened = spaces.flatten(problem.design_space, dummy_design)
+        design_shape = np.array(flattened).shape
+
+    # Add padding for the UNet (1D requires the input to be divisible by 8)
+    padding_size = (8 - design_shape[0] % 8) % 8  # Only pad if needed
+    padded_size = design_shape[0] + padding_size
+    if padding_size > 0:
+        print(f"Padding design from {design_shape[0]} to {padded_size} dimensions")
+    design_shape = (padded_size,)
+
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
@@ -108,7 +116,6 @@ if __name__ == "__main__":
     model = Unet1D(
         dim=args.unet_dim,  # Used for the sinusoidal positional embeddings
         channels=args.n_channels,  # Number of channels in the input
-        dim_mults=(1,),
     ).to(device)
 
     diffusion = GaussianDiffusion1D(
@@ -125,10 +132,14 @@ if __name__ == "__main__":
     elif isinstance(problem.design_space, spaces.Dict):
         transform = flatten_dict_factory(problem, device)
 
-    training_ds = th.utils.data.TensorDataset(
-        transform(training_ds["optimal_design"]),
-        *[training_ds[key] for key in problem.conditions_keys],
-    )
+    # Add padding to the transformed data
+    transformed_data = transform(training_ds["optimal_design"])
+    if padding_size > 0:
+        padded_data = th.nn.functional.pad(transformed_data, (0, padding_size), mode="constant", value=0)
+    else:
+        padded_data = transformed_data
+
+    training_ds = th.utils.data.TensorDataset(padded_data)
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -146,7 +157,7 @@ if __name__ == "__main__":
         for i, data in enumerate(dataloader):
             designs = data[0]
             designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs to a batch of 1D tensors with 1 channel
-            print(f"designs_flat shape: {designs_flat.shape}")
+
             # Learning
             optimizer.zero_grad()
             loss = diffusion(designs_flat)
@@ -165,6 +176,7 @@ if __name__ == "__main__":
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
                     designs = diffusion.sample(batch_size=25)
+
                     if designs.dim() == 3:  # noqa: PLR2004
                         designs = designs.squeeze(1)
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
@@ -174,17 +186,27 @@ if __name__ == "__main__":
 
                     # Plot each tensor as a scatter plot
                     for j, tensor in enumerate(designs):
+                        # Remove padding if needed
+                        if padding_size > 0:
+                            tensor = tensor[:-padding_size]  # noqa: PLW2901
+
                         if isinstance(problem.design_space, spaces.Dict):
                             design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
+
+                            alpha = design["angle_of_attack"]
+                            x_coords = design["coords"][0, :]
+                            y_coords = design["coords"][1, :]
                         else:
                             design = tensor.cpu().numpy()
-                        fig, ax = problem.render(design)
-                        ax.figure.canvas.draw()
-                        img = np.array(fig.canvas.renderer.buffer_rgba())
-                        axes[j].imshow(img)
+                            x_coords = design[: len(design) // 2]
+                            y_coords = design[len(design) // 2 :]
+
+                        axes[j].scatter(x_coords, y_coords, s=10, alpha=0.7)
+                        axes[j].set_xlim(-0.1, 1.1)
+                        axes[j].set_ylim(-0.5, 0.5)
+                        axes[j].title.set_text(f"Alpha: {float(alpha):.2f}")
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
-                        plt.close(fig)  # Close the original figure to free memory
 
                     plt.tight_layout()
                     img_fname = f"images/{batches_done}.png"
