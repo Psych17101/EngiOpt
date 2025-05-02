@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
         # Seeding for reproducibility
         th.manual_seed(seed)
-        np.random.seed(seed)
+        rng = np.random.default_rng(seed)
         th.backends.cudnn.deterministic = True
 
         # Select device
@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
         run = artifact.logged_by()
         if run is None or not hasattr(run, "config"):
-            raise RunRetrievalError()
+            raise RunRetrievalError
 
         artifact_dir = artifact.download()
         ckpt_path = os.path.join(artifact_dir, "generator.pth")
@@ -92,7 +92,7 @@ if __name__ == "__main__":
 
         model = Generator(
             latent_dim=run.config["latent_dim"],
-            n_conds=len(problem.conditions),
+            n_conds=len(problem.conditions),  # type: ignore[call-arg]
             design_shape=problem.design_space.shape,
         ).to(device)
         model.load_state_dict(ckpt["generator"])

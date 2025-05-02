@@ -59,7 +59,7 @@ class Args:
     """decay of first order momentum of gradient"""
     sample_interval: int = 400
     """interval between image samples"""
-    auto_norm: bool = False
+    auto_norm: bool = True
     """Automatically normalize the data when learning."""
     unet_dim: int = 32
     """Dimensions for the UNET1D"""
@@ -155,8 +155,6 @@ if __name__ == "__main__":
     # ----------
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
-            # THIS IS PROBLEM DEPENDENT
-
             designs = data[0]
             designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs to a batch of 1D tensors with 1 channel
 
@@ -178,7 +176,8 @@ if __name__ == "__main__":
                 if batches_done % args.sample_interval == 0:
                     # Extract 25 designs
                     designs = diffusion.sample(batch_size=25)
-                    if designs.dim() > 2:  # noqa: PLR2004
+
+                    if designs.dim() == 3:  # noqa: PLR2004
                         designs = designs.squeeze(1)
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
