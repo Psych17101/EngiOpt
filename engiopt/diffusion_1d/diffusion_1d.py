@@ -59,7 +59,7 @@ class Args:
     """decay of first order momentum of gradient"""
     sample_interval: int = 400
     """interval between image samples"""
-    auto_norm: bool = False
+    auto_norm: bool = True
     """Automatically normalize the data when learning."""
     unet_dim: int = 64
     """Dimensions for the UNET1D"""
