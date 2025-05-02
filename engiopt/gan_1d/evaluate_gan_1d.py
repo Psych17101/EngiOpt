@@ -10,11 +10,12 @@ import numpy as np
 import pandas as pd
 import torch as th
 import tyro
-import wandb
 
 from engiopt import metrics
 from engiopt.dataset_sample_conditions import sample_conditions
 from engiopt.gan_1d.gan_1d import Generator
+from engiopt.gan_1d.gan_1d import prepare_data
+import wandb
 
 
 @dataclasses.dataclass
@@ -90,9 +91,11 @@ if __name__ == "__main__":
         ckpt_path = os.path.join(artifact_dir, "generator.pth")
         ckpt = th.load(ckpt_path, map_location=device)
 
+        _, design_normalizer = prepare_data(problem, device)
         model = Generator(
             latent_dim=run.config["latent_dim"],
             design_shape=problem.design_space.shape,
+            design_normalizer=design_normalizer,
         ).to(device)
         model.load_state_dict(ckpt["generator"])
         model.eval()
@@ -101,7 +104,6 @@ if __name__ == "__main__":
         z = th.randn((args.n_samples, run.config["latent_dim"]), device=device)
         gen_designs = model(z)
         gen_designs_np = gen_designs.detach().cpu().numpy()
-        gen_designs_np = np.clip(gen_designs_np, 1e-3, 1.0)
 
         # Compute metrics
         metrics_dict = metrics.metrics(

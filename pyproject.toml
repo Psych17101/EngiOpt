@@ -31,7 +31,12 @@ dependencies = [
     "tqdm >= 4.67.1",
     "matplotlib >= 3.9.2",
     "denoising_diffusion_pytorch",
-    "diffusers >= 0.33.1"
+    "diffusers >= 0.33.1",
+    "pymoo >= 0.6",
+    "ax-platform >= 0.5",
+    "scikit-learn >= 1.6.0",
+    "hyppo >= 0.5.0",
+    "kaleido >= 0.2.1",
 ]
 dynamic = ["version"]
 
@@ -128,6 +133,7 @@ ignore = [
   "S607",     # start-process-with-partial-path
   "T201",     # print
   "TRY003",     # print
+  "PD901",     # avoid using df to name dataframe
 ]
 extend-select = ["I"]
 
@@ -276,5 +282,15 @@ module = [
     "networkx",
     "autograd",
     "autograd.*",
+    "pymoo",
+    "pymoo.*",
+    "sklearn",
+    "sklearn.*",
+    "ax",
+    "ax.*",
+    "hyppo",
+    "hyppo.*",
+    "plotly",
+    "plotly.*",
 ]
 ignore_missing_imports = true
