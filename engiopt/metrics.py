@@ -6,7 +6,7 @@ optimality gap calculations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from gymnasium import spaces
 import numpy as np
@@ -82,7 +82,7 @@ def metrics(
     dataset_designs: npt.NDArray,
     sampled_conditions: Dataset | None = None,
     sigma: float = 1.0,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Compute various metrics for evaluating generative model designs.
 
     Args:
@@ -93,7 +93,7 @@ def metrics(
         sigma (float): Bandwidth parameter for the Gaussian kernel (in mmd and dpp calculation).
 
     Returns:
-        dict[str, float]: A dictionary containing the computed metrics:
+        dict[str, Any]: A dictionary containing the computed metrics:
             - "iog": Average Initial Optimality Gap (float).
             - "cog": Average Cumulative Optimality Gap (float).
             - "fog": Average Final Optimality Gap (float).
