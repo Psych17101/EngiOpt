@@ -130,7 +130,7 @@ class Discriminator(nn.Module):
         return self.model(self.design_normalizer.normalize(design_flat))
 
 
-def prepare_data(problem: Problem, device: th.device) -> tuple[th.utils.data.TensorDataset, Normalizer, Normalizer]:
+def prepare_data(problem: Problem, device: th.device) -> tuple[th.utils.data.TensorDataset, Normalizer]:
     """Prepares the data for the generator and discriminator.
 
     Args:
@@ -138,7 +138,7 @@ def prepare_data(problem: Problem, device: th.device) -> tuple[th.utils.data.Ten
         device (th.device): The device to prepare the data on.
 
     Returns:
-        tuple[th.utils.data.TensorDataset, Normalizer, Normalizer]: The training dataset, condition normalizer, and design normalizer.
+        tuple[th.utils.data.TensorDataset, Normalizer]: The training dataset, and design normalizer.
     """
     # Flatten the designs if they are a Dict
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
