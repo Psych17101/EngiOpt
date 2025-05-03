@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import os
 import random
 import time
+from typing import TYPE_CHECKING
 
 from denoising_diffusion_pytorch import GaussianDiffusion1D
 from denoising_diffusion_pytorch import Unet1D
@@ -23,6 +24,58 @@ import tyro
 
 from engiopt.transforms import flatten_dict_factory
 import wandb
+
+if TYPE_CHECKING:
+    from engibench.utils.problem import Problem
+
+
+class Normalizer:
+    """Normalizes or denormalizes the input tensor."""
+
+    def __init__(self, min_val: th.Tensor, max_val: th.Tensor, eps: float = 1e-7):
+        self.eps = eps
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def normalize(self, x: th.Tensor) -> th.Tensor:
+        """Normalizes the input tensor."""
+        return (x - self.min_val) / (self.max_val - self.min_val + self.eps)
+
+    def denormalize(self, x: th.Tensor) -> th.Tensor:
+        """Denormalizes the input tensor."""
+        return x * (self.max_val - self.min_val + self.eps) + self.min_val
+
+
+def prepare_data(problem: Problem, device: th.device) -> tuple[th.utils.data.TensorDataset, Normalizer]:
+    """Prepares the data for the generator and discriminator.
+
+    Args:
+        problem (Problem): The problem to prepare the data for.
+        device (th.device): The device to prepare the data on.
+
+    Returns:
+        tuple[th.utils.data.TensorDataset, Normalizer]: The training dataset, and design normalizer.
+    """
+    training_ds = problem.dataset.with_format("torch", device=device)["train"]
+
+    # Flatten the designs if they are a Dict
+    if isinstance(problem.design_space, spaces.Box):
+        transform = transforms.Lambda(lambda x: x.flatten(1))
+    elif isinstance(problem.design_space, spaces.Dict):
+        transform = flatten_dict_factory(problem, device)
+
+    training_ds = th.utils.data.TensorDataset(
+        transform(training_ds["optimal_design"]),
+        *[training_ds[key] for key in problem.conditions_keys],
+    )
+
+    # Create design normalizer
+    design_tensors = training_ds.tensors[0].T
+    design_min = design_tensors.amin(dim=tuple(range(1, design_tensors.ndim))).to(device)
+    design_max = design_tensors.amax(dim=tuple(range(1, design_tensors.ndim))).to(device)
+    design_normalizer = Normalizer(design_min, design_max)
+
+    return training_ds, design_normalizer
 
 
 @dataclass
@@ -59,8 +112,6 @@ class Args:
     """decay of first order momentum of gradient"""
     sample_interval: int = 400
     """interval between image samples"""
-    auto_norm: bool = True
-    """Automatically normalize the data when learning."""
     unet_dim: int = 64
     """Dimensions for the UNET1D"""
     n_channels: int = 1
@@ -114,21 +165,12 @@ if __name__ == "__main__":
     diffusion = GaussianDiffusion1D(
         model,
         seq_length=np.prod(design_shape),
-        auto_normalize=args.auto_norm,
+        auto_normalize=True,
     ).to(device)
 
     # Configure data loader
-    training_ds = problem.dataset.with_format("torch", device=device)["train"]
+    training_ds, design_normalizer = prepare_data(problem, device)
 
-    if isinstance(problem.design_space, spaces.Box):
-        transform = transforms.Lambda(lambda x: x.flatten(1))
-    elif isinstance(problem.design_space, spaces.Dict):
-        transform = flatten_dict_factory(problem, device)
-
-    training_ds = th.utils.data.TensorDataset(
-        transform(training_ds["optimal_design"]),
-        *[training_ds[key] for key in problem.conditions_keys],
-    )
     dataloader = th.utils.data.DataLoader(
         training_ds,
         batch_size=args.batch_size,
@@ -145,8 +187,11 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             designs = data[0]
+
             designs_flat = designs.view(designs.size(0), 1, -1)  # flattens designs to a batch of 1D tensors with 1 channel
-            print(f"designs_flat shape: {designs_flat.shape}")
+            # Normalize the designs
+            designs = design_normalizer.normalize(designs)
+
             # Learning
             optimizer.zero_grad()
             loss = diffusion(designs_flat)
@@ -167,6 +212,9 @@ if __name__ == "__main__":
                     designs = diffusion.sample(batch_size=25)
                     if designs.dim() == 3:  # noqa: PLR2004
                         designs = designs.squeeze(1)
+                    # Denormalize the designs before rendering
+                    designs = design_normalizer.denormalize(designs)
+
                     fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
                     # Flatten axes for easy indexing

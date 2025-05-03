@@ -140,9 +140,9 @@ def prepare_data(problem: Problem, device: th.device) -> tuple[th.utils.data.Ten
     Returns:
         tuple[th.utils.data.TensorDataset, Normalizer]: The training dataset, and design normalizer.
     """
-    # Flatten the designs if they are a Dict
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
 
+    # Flatten the designs if they are a Dict
     if isinstance(problem.design_space, spaces.Box):
         transform = transforms.Lambda(lambda x: x.flatten(1))
     elif isinstance(problem.design_space, spaces.Dict):
