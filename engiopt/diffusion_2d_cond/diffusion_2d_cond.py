@@ -46,7 +46,7 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 1000
+    n_epochs: int = 200
     """number of epochs of training"""
     batch_size: int = 32
     """size of the batches"""
@@ -63,7 +63,7 @@ class Args:
     sample_interval: int = 400
     """interval between image samples"""
 
-    num_timesteps: int = 100
+    num_timesteps: int = 250
     """Number of timesteps in the diffusion schedule"""
     layers_per_block: int = 2
     """Layers per U-NET block"""
@@ -292,7 +292,7 @@ if __name__ == "__main__":
     filtered_ds_min = filtered_ds.min()
     filtered_ds_norm = (filtered_ds - filtered_ds_min) / (filtered_ds_max - filtered_ds_min)
     training_ds = th.utils.data.TensorDataset(
-        filtered_ds_norm.flatten(1), *[training_ds[key] for key, _ in problem.conditions]
+        filtered_ds_norm.flatten(1), *[training_ds[key] for key in problem.conditions_keys]
     )
     cond_tensors = th.stack(training_ds.tensors[1 : len(problem.conditions) + 1])
     conds_min = cond_tensors.amin(dim=tuple(range(1, cond_tensors.ndim)))
@@ -410,9 +410,9 @@ if __name__ == "__main__":
                     # Plot the image created by each output
                     for j, tensor in enumerate(designs):
                         img = tensor.cpu().numpy()  # Extract x and y coordinates
-                        do = hidden_states[j, 0, :].cpu()
+                        dc = hidden_states[j, 0, :].cpu()
                         axes[j].imshow(img[0])  # image plot
-                        title = [(problem.conditions[i][0], f"{do[i]:.2f}") for i in range(len(problem.conditions))]
+                        title = [(problem.conditions[i][0], f"{dc[i]:.2f}") for i in range(len(problem.conditions))]
                         title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
                         axes[j].title.set_text(title_string)  # Set title
                         axes[j].set_xticks([])  # Hide x ticks

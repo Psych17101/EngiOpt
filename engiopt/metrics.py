@@ -6,11 +6,12 @@ optimality gap calculations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from gymnasium import spaces
 import numpy as np
 import numpy.typing as npt
+from scipy.spatial.distance import cdist
 
 if TYPE_CHECKING:
     from datasets import Dataset
@@ -29,25 +30,14 @@ def mmd(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
     Returns:
         float: The MMD value.
     """
+    x_flat = x.reshape(x.shape[0], -1)
+    y_flat = y.reshape(y.shape[0], -1)
 
-    def gaussian_kernel(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
-        """Compute the Gaussian kernel between two samples."""
-        return np.exp(-(np.linalg.norm(x - y) ** 2) / (2 * sigma**2))
+    k_xx = np.exp(-cdist(x_flat, x_flat, "sqeuclidean") / (2 * sigma**2))
+    k_yy = np.exp(-cdist(y_flat, y_flat, "sqeuclidean") / (2 * sigma**2))
+    k_xy = np.exp(-cdist(x_flat, y_flat, "sqeuclidean") / (2 * sigma**2))
 
-    n, _, _ = x.shape
-    m, _, _ = y.shape
-
-    # Flatten the images to (n, length*w) and (m, length*w)
-    x_flat = x.reshape(n, -1)
-    y_flat = y.reshape(m, -1)
-
-    # Compute pairwise kernel values
-    xx: float = float(np.mean([gaussian_kernel(x, x_, sigma) for x in x_flat for x_ in x_flat]))
-    yy: float = float(np.mean([gaussian_kernel(y_, y__, sigma) for y_ in y_flat for y__ in y_flat]))
-    xy: float = float(np.mean([gaussian_kernel(x, y_, sigma) for x in x_flat for y_ in y_flat]))
-
-    # Compute MMD
-    return xx + yy - 2 * xy
+    return k_xx.mean() + k_yy.mean() - 2 * k_xy.mean()
 
 
 def dpp_diversity(x: np.ndarray, sigma: float = 1.0) -> float:
@@ -60,18 +50,17 @@ def dpp_diversity(x: np.ndarray, sigma: float = 1.0) -> float:
     Returns:
         float: The DPP diversity value.
     """
-    n, length, w = x.shape
+    x_flat = x.reshape(x.shape[0], -1)
+    pairwise_sq_dists = cdist(x_flat, x_flat, "sqeuclidean")
+    similarity_matrix = np.exp(-pairwise_sq_dists / (2 * sigma**2))
 
-    # Flatten the images to (n, length*w)
-    x_flat = x.reshape(n, -1)
+    # Regularize the matrix slightly to avoid numerical issues
+    reg_matrix = similarity_matrix + 1e-6 * np.eye(x.shape[0])
 
-    # Compute the similarity matrix using the Gaussian kernel
-    similarity_matrix = np.array(
-        [[np.exp(-(np.linalg.norm(x - x_) ** 2) / (2 * sigma**2)) for x_ in x_flat] for x in x_flat]
-    )
-
-    # Compute the determinant of the similarity matrix
-    return np.linalg.det(similarity_matrix + np.eye(n) * 1e-6)  # Add small value for numerical stability
+    try:
+        return np.linalg.det(reg_matrix)
+    except np.linalg.LinAlgError:
+        return 0.0  # fallback in case of numerical issues
 
 
 def optimality_gap(opt_history: list[OptiStep], baseline: float) -> list[float]:
@@ -93,7 +82,7 @@ def metrics(
     dataset_designs: npt.NDArray,
     sampled_conditions: Dataset | None = None,
     sigma: float = 1.0,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Compute various metrics for evaluating generative model designs.
 
     Args:
@@ -104,7 +93,7 @@ def metrics(
         sigma (float): Bandwidth parameter for the Gaussian kernel (in mmd and dpp calculation).
 
     Returns:
-        dict[str, float]: A dictionary containing the computed metrics:
+        dict[str, Any]: A dictionary containing the computed metrics:
             - "iog": Average Initial Optimality Gap (float).
             - "cog": Average Cumulative Optimality Gap (float).
             - "fog": Average Final Optimality Gap (float).

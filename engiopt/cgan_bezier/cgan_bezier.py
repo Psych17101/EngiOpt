@@ -47,9 +47,9 @@ class Args:
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
-    seed: int = 1
+    seed: int = 10
     """Random seed."""
-    save_model: bool = False
+    save_model: bool = True
     """Saves the model to disk."""
 
     # Algorithm specific
@@ -555,7 +555,7 @@ if __name__ == "__main__":
             x_fake2, cp2, w2, ub2, _, sf2 = generator(c2, z2, real_conds)
 
             logits_fake2, q_out2 = discriminator(x_fake2, real_conds, sf2)
-            g_loss_base = bce_with_logits(logits_fake2, th.ones_like(logits_fake2, device=device)) * 10
+            g_loss_base = bce_with_logits(logits_fake2, th.ones_like(logits_fake2, device=device)) * 100
             r_loss = compute_r_loss(cp2, w2)
             r_lambda = R_LAMBDA_MAX * min(1.0, epoch / R_FADE_EPOCHS)
 
@@ -603,7 +603,9 @@ if __name__ == "__main__":
                     axes[j].scatter(x_plt, y_plt, s=10, alpha=0.7)
                     axes[j].set_xlim(-0.1, 1.1)
                     axes[j].set_ylim(-0.5, 0.5)
-                    title = [(problem.conditions[i][0], f"{do1[i]:.2f}") for i in range(len(problem.conditions))]
+                    title = [("alpha", f"{do1[0]:.2f}")] + [
+                        (problem.conditions[i - 1][0], f"{do1[i]:.2f}") for i in range(1, len(do1))
+                    ]
                     title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
                     axes[j].title.set_text(title_string)  # Set title
                     axes[j].set_xticks([])
