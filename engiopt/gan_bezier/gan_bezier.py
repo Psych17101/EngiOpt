@@ -397,12 +397,8 @@ if __name__ == "__main__":
     random.seed(args.seed)
     th.backends.cudnn.deterministic = True
 
-    if (
-        not isinstance(problem.design_space, spaces.Dict)
-        or "coords" not in problem.design_space
-        or "angle_of_attack" not in problem.design_space
-    ):
-        raise ValueError("Design space must be a Dict space with 'coords' and 'angle_of_attack' keys")
+    if not isinstance(problem.design_space, (spaces.Box, spaces.Dict)):
+        raise ValueError("This algorithm only works with Box or Dict spaces.")
 
     os.makedirs("images", exist_ok=True)
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
@@ -427,9 +423,11 @@ if __name__ == "__main__":
     design_scalar_keys = list(problem_dataset["optimal_design"][0].keys())
     design_scalar_keys.remove("coords")
     coords_set = [problem_dataset[i]["optimal_design"]["coords"] for i in range(len(problem_dataset))]
-
+    design_scalars = [example["optimal_design"][key] for example in problem_dataset for key in design_scalar_keys]
     training_ds = th.utils.data.TensorDataset(
         th.stack(coords_set),
+        th.stack(design_scalars).unsqueeze(1),
+        *[problem_dataset[key] for key, _ in problem.conditions],
     )
 
     dataloader = th.utils.data.DataLoader(training_ds, batch_size=args.batch_size, shuffle=True)
