@@ -44,7 +44,7 @@ class Args:
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
-    seed: int = 6
+    seed: int = 1
     """Random seed."""
     save_model: bool = False
     """Saves the model to disk."""
@@ -481,7 +481,7 @@ if __name__ == "__main__":
             q_logstd2 = q_out2[:, 1, :]
             q_loss2 = compute_q_loss(q_mean2, q_logstd2, q_target=c2)
 
-            total_g_loss = (g_loss_base +10 * r_loss + q_loss2)
+            total_g_loss = g_loss_base + 10 * r_loss + q_loss2
             g_optimizer.zero_grad()
             total_g_loss.backward()
             g_optimizer.step()

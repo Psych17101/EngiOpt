@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 _EPS = 1e-7
 
+
 @dataclass
 class Args:
     """Command-line arguments."""
@@ -595,13 +596,13 @@ if __name__ == "__main__":
                 axes = axes.flatten()
                 for j in range(25):
                     do1 = do[j]
-                    x_plt, y_plt = dp[j].cpu().numpy()  # [2, #points]
-                    axes[j].scatter(x_plt, y_plt, s=10, alpha=0.7)
-                    axes[j].set_xlim(-0.1, 1.1)
-                    axes[j].set_ylim(-0.5, 0.5)
-                    title = [("alpha", f"{do1[0]:.2f}")] + [
-                        (problem.conditions[i - 1][0], f"{do1[i]:.2f}") for i in range(1, len(do1))
-                    ]
+                    coords = dp[j].cpu().numpy()  # [2, #points]
+                    design = {"coords": coords, "angle_of_attack": do1[0]}
+                    fig, ax = problem.render(design)
+                    ax.figure.canvas.draw()
+                    img = np.array(fig.canvas.renderer.buffer_rgba())
+                    axes[j].imshow(img)
+                    title = [(problem.conditions[i - 1][0], f"{do1[i]:.2f}") for i in range(1, len(do1))]
                     title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
                     axes[j].title.set_text(title_string)  # Set title
                     axes[j].set_xticks([])
