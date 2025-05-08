@@ -44,7 +44,7 @@ class Args:
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
-    seed: int = 1
+    seed: int = 6
     """Random seed."""
     save_model: bool = False
     """Saves the model to disk."""
@@ -52,11 +52,11 @@ class Args:
     # Algorithm specific
     n_epochs: int = 5000
     """number of epochs of training"""
-    batch_size: int = 64
+    batch_size: int = 32
     """size of the batches"""
-    lr_gen: float = 0.0002
+    lr_gen: float = 0.00005
     """learning rate for the generator"""
-    lr_disc: float = 0.00005
+    lr_disc: float = 0.0002
     """learning rate for the discriminator"""
     b1: float = 0.5
     """decay of first order momentum of gradient"""
@@ -64,13 +64,13 @@ class Args:
     """decay of first order momentum of gradient"""
     n_cpu: int = 8
     """number of cpu threads to use during batch generation"""
-    latent_dim: int = 100
+    latent_dim: int = 4
     """dimensionality of the latent space"""
     sample_interval: int = 400
     """interval between image samples"""
-    noise_dim: int = 6
+    noise_dim: int = 10
     """latent code dimension for the Bezier GAN generator"""
-    bezier_control_pts: int = 40
+    bezier_control_pts: int = 32
     """number of control points for the Bezier curve"""
 
 
@@ -481,7 +481,7 @@ if __name__ == "__main__":
             q_logstd2 = q_out2[:, 1, :]
             q_loss2 = compute_q_loss(q_mean2, q_logstd2, q_target=c2)
 
-            total_g_loss = g_loss_base + 10.0 * r_loss + q_loss2
+            total_g_loss = (g_loss_base +10 * r_loss + q_loss2)
             g_optimizer.zero_grad()
             total_g_loss.backward()
             g_optimizer.step()

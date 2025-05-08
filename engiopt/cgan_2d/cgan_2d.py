@@ -48,8 +48,10 @@ class Args:
     """number of epochs of training"""
     batch_size: int = 64
     """size of the batches"""
-    lr: float = 3e-4
-    """learning rate"""
+    lr_gen: float = 0.0001
+    """learning rate for the generator"""
+    lr_disc: float = 0.0004
+    """learning rate for the discriminator"""
     b1: float = 0.5
     """decay of first order momentum of gradient"""
     b2: float = 0.999
@@ -184,8 +186,8 @@ if __name__ == "__main__":
     )
 
     # Optimizers
-    optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
-    optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
+    optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr_gen, betas=(args.b1, args.b2))
+    optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr_disc, betas=(args.b1, args.b2))
 
     @th.no_grad()
     def sample_designs(n_designs: int) -> tuple[th.Tensor, th.Tensor]:
