@@ -260,7 +260,9 @@ class Generator(nn.Module):
         self.cpw_generator = CPWGenerator(total_in, n_control_points, dense_layers, deconv_channels)
         self.bezier_layer = BezierLayer(m_features, n_control_points, n_data_points, eps)
 
-    def forward(self, c: th.Tensor, z: th.Tensor) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
+    def forward(
+        self, c: th.Tensor, z: th.Tensor
+    ) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
         """Forward pass for the generator.
 
         :param c: [N, latent_dim]  (sampled from uniform in [bounds[0], bounds[1]])
@@ -394,6 +396,7 @@ def compute_q_loss(q_mean: th.Tensor, q_logstd: th.Tensor, q_target: th.Tensor) 
     q_loss_elem = q_logstd + 0.5 * (epsilon**2)
     return q_loss_elem.mean()
 
+
 class Normalizer:
     """Normalizes or denormalizes the input tensor."""
 
@@ -409,6 +412,7 @@ class Normalizer:
     def denormalize(self, x: th.Tensor) -> th.Tensor:
         """Denormalizes the input tensor."""
         return x * (self.max_val - self.min_val + self.eps) + self.min_val
+
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -562,14 +566,13 @@ if __name__ == "__main__":
                 fig, axes = plt.subplots(5, 5, figsize=(12, 12), dpi=300)
                 axes = axes.flatten()
                 for j in range(25):
-                    x_plt, y_plt = dp_vis[j].cpu().numpy()  # [2, #points]
+                    coords = dp_vis[j].cpu().numpy()  # [2, #points]
                     sf_plt = sf[j].cpu().numpy()  # [1, #points]
-                    axes[j].scatter(x_plt, y_plt, s=10, alpha=0.7)
-                    title = [(design_scalar_keys[i], f"{sf_plt[i]:.2f}") for i in range(len(sf_plt))]
-                    title_string = "\n ".join(f"{condition}: {value}" for condition, value in title)
-                    axes[j].title.set_text(title_string)
-                    axes[j].set_xlim(-0.1, 1.1)
-                    axes[j].set_ylim(-0.5, 0.5)
+                    design = {"coords": coords, "angle_of_attack": sf_plt}
+                    fig, ax = problem.render(design)
+                    ax.figure.canvas.draw()
+                    img = np.array(fig.canvas.renderer.buffer_rgba())
+                    axes[j].imshow(img)
                     axes[j].set_xticks([])
                     axes[j].set_yticks([])
 
