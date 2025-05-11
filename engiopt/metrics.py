@@ -8,15 +8,21 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+import os
 from gymnasium import spaces
 import numpy as np
 import numpy.typing as npt
 from scipy.spatial.distance import cdist
+import multiprocessing
+import traceback
 
 if TYPE_CHECKING:
     from datasets import Dataset
     from engibench import OptiStep
     from engibench.core import Problem
+import threading
+
+multiprocessing.set_start_method("fork")
 
 
 def mmd(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
@@ -76,11 +82,78 @@ def optimality_gap(opt_history: list[OptiStep], baseline: float) -> list[float]:
     return [opt.obj_values - baseline for opt in opt_history]
 
 
+def simulate_failure_ratio(
+    problem: Problem,
+    gen_designs: npt.NDArray,
+    sampled_conditions: Dataset | None = None,
+) -> float:
+    """Compute the failure ratio of generated designs.
+
+    Args:
+        problem: The optimization problem to evaluate.
+        gen_designs (np.ndarray): Array of shape (n_samples, l, w) for generative model designs.
+        sampled_conditions (Dataset): Dataset of sampled conditions for optimization. If None, no conditions are used.
+
+    Returns:
+        float: The failure ratio of generated designs.
+    """
+    failure_count = 0
+    for idx, design in enumerate(gen_designs):
+        if isinstance(problem.design_space, spaces.Dict):
+            # Need to unflatten the design to be used for optimization or simulation
+            unflattened_design = spaces.unflatten(problem.design_space, design)
+            unflattened_design["angle_of_attack"] = unflattened_design["angle_of_attack"][0]
+        else:
+            unflattened_design = design
+
+        def worker(idx, config, return_queue):
+            try:
+                objs = problem.simulate(unflattened_design, config=config, mpicores=10)
+                if np.isnan(objs[0]) or np.isnan(objs[1]):
+                    print(f"Simulation returned NaN values for design {idx}")
+                    raise Exception("Simulation returned NaN values")
+                return_queue.put(("ok", objs))
+            except Exception as e:
+                return_queue.put(("error", traceback.format_exc()))
+
+        # Attempt to simulate the design
+        def run_with_timeout(idx, timeout=30):
+            config = sampled_conditions[idx] if sampled_conditions is not None else None
+            q = multiprocessing.Queue()
+            p = multiprocessing.Process(target=worker, args=(idx, config, q))
+            p.start()
+            p.join(timeout)
+
+            if p.is_alive():
+                p.terminate()  # force-kill the child process
+                p.join()
+                os.system("docker stop machaero")
+                raise RuntimeError(f"Simulation timed out for design {idx}")
+
+            if not q.empty():
+                status, payload = q.get()
+                if status == "ok":
+                    print(f"Simulation successful for design {idx}: {payload}")
+                else:
+                    raise RuntimeError(f"Simulation error for design {idx}:\n{payload}")
+            else:
+                raise RuntimeError("Simulation process ended without reporting back")
+
+        try:
+            run_with_timeout(idx, timeout=30)
+        except RuntimeError as e:
+            failure_count += 1
+            print(e)
+
+    return failure_count / len(gen_designs)  # Return the failure ratio
+
+
 def metrics(
     problem: Problem,
     gen_designs: npt.NDArray,
     dataset_designs: npt.NDArray,
     sampled_conditions: Dataset | None = None,
+    constraint_key: str | None = None,
     sigma: float = 1.0,
 ) -> dict[str, Any]:
     """Compute various metrics for evaluating generative model designs.
@@ -105,8 +178,11 @@ def metrics(
     cog_list = []
     iog_list = []
     fog_list = []
+    viol_list = []
     for i in range(n_samples):
         conditions = sampled_conditions[i] if sampled_conditions is not None else None
+        if conditions and "volfrac" not in conditions and "volume" not in conditions:
+            conditions["beta_initial"] = 150
         if isinstance(problem.design_space, spaces.Dict):
             # Need to unflatten the design to be used for optimization or simulation
             unflattened_design = spaces.unflatten(problem.design_space, gen_designs[i])
@@ -120,10 +196,19 @@ def metrics(
         cog_list.append(np.sum(opt_history_gaps))
         fog_list.append(opt_history_gaps[-1])
 
+        # If conditions dict has a key 'volfrac', check if the value is greater than 0.5
+        if conditions and "volfrac" in conditions:
+            viol = np.abs(np.mean(unflattened_design) - conditions["volfrac"]) >= 0.01
+            viol_list.append(viol)
+        elif conditions and "volume" in conditions:
+            viol = np.abs(np.mean(unflattened_design) - conditions["volume"]) >= 0.01
+            viol_list.append(viol)
+
     # Compute the average Initial Optimality Gap (IOG), Cumulative Optimality Gap (COG), and Final Optimality Gap (FOG)
     average_iog: float = float(np.mean(iog_list))  # Average of initial optimality gaps
     average_cog: float = float(np.mean(cog_list))  # Average of cumulative optimality gaps
     average_fog: float = float(np.mean(fog_list))  # Average of final optimality gaps
+    average_viol: float = float(np.mean(viol_list))  # Average of violation ratios
 
     # Compute the Maximum Mean Discrepancy (MMD) between generated and dataset designs
     # We compute the MMD on the flattened designs
@@ -148,4 +233,5 @@ def metrics(
         "fog": average_fog,
         "mmd": mmd_value,
         "dpp": dpp_value,
+        "viol": average_viol,
     }

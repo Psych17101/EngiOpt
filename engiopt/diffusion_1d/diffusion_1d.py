@@ -46,7 +46,7 @@ class Normalizer:
         return x * (self.max_val - self.min_val + self.eps) + self.min_val
 
 
-def prepare_data(problem: Problem, device: th.device) -> tuple[th.utils.data.TensorDataset, Normalizer]:
+def prepare_data(problem: Problem, padding_size: int, device: th.device) -> tuple[th.utils.data.TensorDataset, Normalizer]:
     """Prepares the data for the generator and discriminator.
 
     Args:
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     ).to(device)
 
     # Configure data loader
-    training_ds, design_normalizer = prepare_data(problem, device)
+    training_ds, design_normalizer = prepare_data(problem, padding_size, device)
 
     dataloader = th.utils.data.DataLoader(
         training_ds,
