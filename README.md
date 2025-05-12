@@ -29,5 +29,3 @@ pip install -e .
 ## Dashboards
 The integration with WandB allows us to access live dashboards of our runs (on the cluster or not). We also upload the trained models there. You can access some of our runs at https://wandb.ai/engibench/engiopt.
 <img src="imgs/wandb_dashboard.png" alt="WandB dashboards"/>
-
-
