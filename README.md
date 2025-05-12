@@ -6,25 +6,23 @@
 
 # EngiOpt
 
-This repository contains the code for optimization and machine learning algorithms for engineering design problems. Our goal here is to provide clean example usage of EngiBench and provide strong baselines for future comparisons.
+This repository contains the code for optimization and machine learning algorithms for engineering design problems. Our goal here is to provide clean example usage of [EngiBench](https://github.com/IDEALLab/EngiBench) and provide strong baselines for future comparisons.
 
 ## Coding Philosophy
 As much as we can, we follow the [CleanRL](https://github.com/vwxyzjn/cleanrl) philosophy: single-file, high-quality implementations with research-friendly features:
 * Single-file implementation: every detail is in one file, so you can easily understand and modify the code.
-* High-quality: we use type hints, docstrings, and comments to make the code easy to understand.
+* High-quality: we use type hints, docstrings, and comments to make the code easy to understand. We also rely on linters for formatting and checking our code.
 * Logging: we use experiment tracking tools like [Weights & Biases](https://wandb.ai/site) to log the results of our experiments.
-* Reproducibility: we pin all the versions used in the experiment to ensure reproducibility. We also seed all the random number generators.
+* Reproducibility: we seed all the random number generators, make PyTorch deterministic, report the hyperparameters and code in WandB.
 
 ## Install
-1. Install EngiBench from source:
+1. Install EngiBench:
 ```
-git clone git@github.com:IDEALLab/EngiBench.git
-cd engibench
-pip install -e ".[all]"
+pip install "engibench[all]"
 ```
 2. Install EngiOpt dependencies:
 ```
-cd ../engiopt
+cd EngiOpt/
 pip install -e .
 ```
 
@@ -33,7 +31,3 @@ The integration with WandB allows us to access live dashboards of our runs (on t
 <img src="imgs/wandb_dashboard.png" alt="WandB dashboards"/>
 
 
-
-
-## Wishlist
-see https://github.com/IDEALLab/EngiBench/issues/4
