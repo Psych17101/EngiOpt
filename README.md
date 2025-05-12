@@ -16,14 +16,16 @@ As much as we can, we follow the [CleanRL](https://github.com/vwxyzjn/cleanrl) p
 * Reproducibility: we seed all the random number generators, make PyTorch deterministic, report the hyperparameters and code in WandB.
 
 ## Install
-1. Install EngiBench:
-```
-pip install "engibench[all]"
-```
-2. Install EngiOpt dependencies:
+Install EngiOpt dependencies:
 ```
 cd EngiOpt/
 pip install -e .
+```
+If you're modifying EngiBench, you can install it from source and as editable:
+```
+git clone git@github.com:IDEALLab/EngiBench.git
+cd EngiBench/
+pip install -e ".[all]"
 ```
 
 ## Dashboards
