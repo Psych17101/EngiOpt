@@ -143,7 +143,15 @@ def plot_pareto_front(args: Args):
         )
 
     fig.update_traces(marker={"size": 9, "opacity": 0.8})
-    fig.update_layout(legend={"x": 0.75, "y": 0.98, "title": "Method"}, hovermode="closest")
+    fig.update_layout(
+        legend={"x": 0.75, "y": 0.98, "title": "Method"},
+        hovermode="closest",
+        font={"size": 18},
+        xaxis={"title": {"font": {"size": 18}}},
+        yaxis={"title": {"font": {"size": 18}}},
+        legend_title={"font": {"size": 18}},
+        legend_font={"size": 18},
+    )
     fig.write_image(os.path.join(args.results_dir, f"pareto_front_{args.seed}.pdf"), engine="kaleido")
 
     # Two-sample MMD² test on valid designs only
