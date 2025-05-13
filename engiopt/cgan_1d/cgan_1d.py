@@ -68,19 +68,21 @@ class Args:
     """Saves the model to disk."""
 
     # Algorithm specific
-    n_epochs: int = 1000
+    n_epochs: int = 5000
     """number of epochs of training"""
-    batch_size: int = 64
+    batch_size: int = 32
     """size of the batches"""
-    lr: float = 3e-4
-    """learning rate"""
+    lr_gen: float = 0.00005
+    """learning rate for the generator"""
+    lr_disc: float = 0.0002
+    """learning rate for the discriminator"""
     b1: float = 0.5
     """decay of first order momentum of gradient"""
     b2: float = 0.999
     """decay of first order momentum of gradient"""
     n_cpu: int = 8
     """number of cpu threads to use during batch generation"""
-    latent_dim: int = 100
+    latent_dim: int = 4
     """dimensionality of the latent space"""
     sample_interval: int = 400
     """interval between image samples"""
@@ -259,8 +261,8 @@ if __name__ == "__main__":
     adversarial_loss.to(device)
 
     # Optimizers
-    optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
-    optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr, betas=(args.b1, args.b2))
+    optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr_gen, betas=(args.b1, args.b2))
+    optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr_disc, betas=(args.b1, args.b2))
 
     @th.no_grad()
     def sample_designs(n_designs: int) -> tuple[th.Tensor, th.Tensor]:

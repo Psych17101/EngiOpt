@@ -44,7 +44,7 @@ class Args:
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
-    seed: int = 6
+    seed: int = 1
     """Random seed."""
     save_model: bool = False
     """Saves the model to disk."""
@@ -239,23 +239,30 @@ class Generator(nn.Module):
         noise_dim: int,
         n_control_points: int,
         n_data_points: int,
+        design_scalars_normalizer: Normalizer,
         eps: float = 1e-7,
         m_features: int = 256,
         feature_gen_layers: tuple[int, ...] = (1024,),
         dense_layers: tuple[int, ...] = (1024,),
         deconv_channels: tuple[int, ...] = (768, 384, 192, 96),
+        scalar_features: int = 1,
+        scalar_layers: tuple[int, ...] = (128, 128, 128, 128),
     ):
         super().__init__()
         self.latent_dim = latent_dim
         self.noise_dim = noise_dim
+        self.design_scalars_normalizer = design_scalars_normalizer
 
         # total input dimension for the MLP
         total_in = latent_dim + noise_dim
         self.feature_generator = MLP(total_in, m_features, feature_gen_layers)
+        self.scalar_generator = MLP(m_features, scalar_features, scalar_layers)
         self.cpw_generator = CPWGenerator(total_in, n_control_points, dense_layers, deconv_channels)
         self.bezier_layer = BezierLayer(m_features, n_control_points, n_data_points, eps)
 
-    def forward(self, c: th.Tensor, z: th.Tensor) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
+    def forward(
+        self, c: th.Tensor, z: th.Tensor
+    ) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
         """Forward pass for the generator.
 
         :param c: [N, latent_dim]  (sampled from uniform in [bounds[0], bounds[1]])
@@ -270,15 +277,28 @@ class Generator(nn.Module):
         cp, w = self.cpw_generator(combined)
         # 4) produce final design
         dp, ub, db = self.bezier_layer(features, cp, w)
-        return dp, cp, w, ub, db
+
+        # 2.1) features => scalar outputs
+        sf = th.sigmoid(self.scalar_generator(features))
+        sf = self.design_scalars_normalizer.denormalize(sf)
+        return dp, cp, w, ub, db, sf
 
 
 class Discriminator(nn.Module):
     """Bezier GAN discriminator."""
 
-    def __init__(self, latent_dim: int, dropout: float = 0.4, momentum: float = 0.9):
+    def __init__(  # noqa: PLR0913
+        self,
+        latent_dim: int,
+        design_scalars: int,
+        design_shape: tuple,
+        design_scalars_normalizer: Normalizer,
+        dropout: float = 0.4,
+        momentum: float = 0.9,
+    ):
         super().__init__()
         self.latent_dim = latent_dim
+        self.design_scalars_normalizer = design_scalars_normalizer
 
         # First conv: kernel_size=(2,4), stride=(1,2).
         # This will reduce height from 2 -> 1 (because kernel=2, stride=1)
@@ -301,13 +321,13 @@ class Discriminator(nn.Module):
 
         # Flatten and a small MLP head for D and Q:
         # Measure shape with a dummy pass:
-        test_in = th.zeros(1, 1, 2, 192)
+        test_in = th.zeros(1, 1, design_shape[0], design_shape[1])
         out = self.conv1(test_in)
         out = self.conv2(out)
         flat_dim = out.numel()
 
         self.post_conv_fc = nn.Sequential(
-            nn.Linear(flat_dim, 256),
+            nn.Linear(flat_dim + design_scalars, 256),
             nn.BatchNorm1d(256, momentum=momentum),
             nn.LeakyReLU(0.2, inplace=True),
         )
@@ -323,7 +343,7 @@ class Discriminator(nn.Module):
         self.q_mean = nn.Linear(128, latent_dim)
         self.q_logstd = nn.Linear(128, latent_dim)
 
-    def forward(self, x: th.Tensor) -> tuple[th.Tensor, th.Tensor]:
+    def forward(self, x: th.Tensor, design_scalars: th.Tensor) -> tuple[th.Tensor, th.Tensor]:
         """Forward pass for the discriminator."""
         # x is [batch_size, 2, 192] => shape => [N, 1, 2, 192]
         x = x.unsqueeze(1)
@@ -332,6 +352,8 @@ class Discriminator(nn.Module):
         out = self.conv2(out)
 
         out = out.view(out.size(0), -1)
+        design_scalars = self.design_scalars_normalizer.normalize(design_scalars)
+        out = th.cat((out, design_scalars), dim=1)
         out = self.post_conv_fc(out)
 
         d = self.d_out(out)
@@ -375,6 +397,23 @@ def compute_q_loss(q_mean: th.Tensor, q_logstd: th.Tensor, q_target: th.Tensor) 
     return q_loss_elem.mean()
 
 
+class Normalizer:
+    """Normalizes or denormalizes the input tensor."""
+
+    def __init__(self, min_val: th.Tensor, max_val: th.Tensor, eps: float = 1e-7):
+        self.eps = eps
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def normalize(self, x: th.Tensor) -> th.Tensor:
+        """Normalizes the input tensor."""
+        return (x - self.min_val) / (self.max_val - self.min_val + self.eps)
+
+    def denormalize(self, x: th.Tensor) -> th.Tensor:
+        """Denormalizes the input tensor."""
+        return x * (self.max_val - self.min_val + self.eps) + self.min_val
+
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
@@ -407,17 +446,6 @@ if __name__ == "__main__":
     coords_space: spaces.Box = problem.design_space["coords"]
     n_data_points = coords_space.shape[1]
 
-    generator = Generator(
-        latent_dim=args.latent_dim,
-        noise_dim=args.noise_dim,
-        n_control_points=bezier_control_pts,
-        n_data_points=n_data_points,
-        eps=_EPS,
-    ).to(device)
-
-    # Discriminator: we pass the same latent_dim for the Q branch
-    discriminator = Discriminator(latent_dim=args.latent_dim).to(device)
-
     # The Discriminator uses shape [N, 2, #points].
     problem_dataset = problem.dataset.with_format("torch")["train"]
     design_scalar_keys = list(problem_dataset["optimal_design"][0].keys())
@@ -431,6 +459,28 @@ if __name__ == "__main__":
     )
 
     dataloader = th.utils.data.DataLoader(training_ds, batch_size=args.batch_size, shuffle=True)
+    design_scalars_min = training_ds.tensors[1].amin(dim=0).to(device)
+    design_scalars_max = training_ds.tensors[1].amax(dim=0).to(device)
+
+    design_scalars_normalizer = Normalizer(design_scalars_min, design_scalars_max)
+
+    generator = Generator(
+        latent_dim=args.latent_dim,
+        noise_dim=args.noise_dim,
+        n_control_points=bezier_control_pts,
+        n_data_points=n_data_points,
+        design_scalars_normalizer=design_scalars_normalizer,
+        eps=_EPS,
+        scalar_features=1,
+    ).to(device)
+
+    # Discriminator: we pass the same latent_dim for the Q branch
+    discriminator = Discriminator(
+        latent_dim=args.latent_dim,
+        design_scalars=len(design_scalar_keys),
+        design_shape=problem.design_space["coords"].shape,
+        design_scalars_normalizer=design_scalars_normalizer,
+    ).to(device)
 
     # Two separate Adam optimizers
     d_optimizer = th.optim.Adam(discriminator.parameters(), lr=args.lr_disc, betas=(args.b1, args.b2), eps=_EPS)
@@ -442,10 +492,11 @@ if __name__ == "__main__":
     for epoch in range(args.n_epochs):
         for i, real_designs_cpu in enumerate(dataloader):
             real_designs = real_designs_cpu[0].to(device)
+            real_alpha = real_designs_cpu[1].to(device)
 
             # ===== Step 1: D train real =====
             d_optimizer.zero_grad()
-            logits_real, _ = discriminator(real_designs)
+            logits_real, _ = discriminator(real_designs, real_alpha)
             d_loss_real = bce_with_logits(logits_real, th.ones_like(logits_real, device=device))
             d_loss_real.backward()
             d_optimizer.step()
@@ -455,8 +506,8 @@ if __name__ == "__main__":
             z = 0.5 * th.randn(args.batch_size, args.noise_dim, device=device)
             d_optimizer.zero_grad()
 
-            x_fake, cp, w, ub, db = generator(c, z)
-            logits_fake, q_out = discriminator(x_fake)
+            x_fake, cp, w, ub, db, sf = generator(c, z)
+            logits_fake, q_out = discriminator(x_fake, sf)
 
             d_loss_fake = bce_with_logits(logits_fake, th.zeros_like(logits_fake, device=device))
 
@@ -471,9 +522,9 @@ if __name__ == "__main__":
             # ===== Step 3: G train (g_loss + 10*r_loss + q_loss) =====
             c2 = (bounds[1] - bounds[0]) * th.rand(args.batch_size, args.latent_dim, device=device) + bounds[0]
             z2 = 0.5 * th.randn(args.batch_size, args.noise_dim, device=device)
-            x_fake2, cp2, w2, ub2, _ = generator(c2, z2)
+            x_fake2, cp2, w2, ub2, _, sf2 = generator(c2, z2)
 
-            logits_fake2, q_out2 = discriminator(x_fake2)
+            logits_fake2, q_out2 = discriminator(x_fake2, sf2)
             g_loss_base = bce_with_logits(logits_fake2, th.ones_like(logits_fake2, device=device))
             r_loss = compute_r_loss(cp2, w2)
 
@@ -481,7 +532,7 @@ if __name__ == "__main__":
             q_logstd2 = q_out2[:, 1, :]
             q_loss2 = compute_q_loss(q_mean2, q_logstd2, q_target=c2)
 
-            total_g_loss = (g_loss_base +10 * r_loss + q_loss2)
+            total_g_loss = g_loss_base + 10 * r_loss + q_loss2
             g_optimizer.zero_grad()
             total_g_loss.backward()
             g_optimizer.step()
@@ -510,15 +561,18 @@ if __name__ == "__main__":
                 with th.no_grad():
                     z_vis = 0.5 * th.randn(25, args.noise_dim, device=device)
                     c_vis = (bounds[1] - bounds[0]) * th.rand(25, args.latent_dim, device=device) + bounds[0]
-                    dp_vis, cp_vis, w_vis, ub_vis, db_vis = generator(c_vis, z_vis)
+                    dp_vis, cp_vis, w_vis, ub_vis, db_vis, sf = generator(c_vis, z_vis)
 
                 fig, axes = plt.subplots(5, 5, figsize=(12, 12), dpi=300)
                 axes = axes.flatten()
                 for j in range(25):
-                    x_plt, y_plt = dp_vis[j].cpu().numpy()  # [2, #points]
-                    axes[j].scatter(x_plt, y_plt, s=10, alpha=0.7)
-                    axes[j].set_xlim(-0.1, 1.1)
-                    axes[j].set_ylim(-0.5, 0.5)
+                    coords = dp_vis[j].cpu().numpy()  # [2, #points]
+                    sf_plt = sf[j].cpu().numpy()  # [1, #points]
+                    design = {"coords": coords, "angle_of_attack": sf_plt}
+                    fig, ax = problem.render(design)
+                    ax.figure.canvas.draw()
+                    img = np.array(fig.canvas.renderer.buffer_rgba())
+                    axes[j].imshow(img)
                     axes[j].set_xticks([])
                     axes[j].set_yticks([])
 

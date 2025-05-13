@@ -241,19 +241,12 @@ if __name__ == "__main__":
 
                         if isinstance(problem.design_space, spaces.Dict):
                             design = spaces.unflatten(problem.design_space, tensor.cpu().numpy())
-
-                            alpha = design["angle_of_attack"]
-                            x_coords = design["coords"][0, :]
-                            y_coords = design["coords"][1, :]
                         else:
                             design = tensor.cpu().numpy()
-                            x_coords = design[: len(design) // 2]
-                            y_coords = design[len(design) // 2 :]
-
-                        axes[j].scatter(x_coords, y_coords, s=10, alpha=0.7)
-                        axes[j].set_xlim(-0.1, 1.1)
-                        axes[j].set_ylim(-0.5, 0.5)
-                        axes[j].title.set_text(f"Alpha: {float(alpha):.2f}")
+                        fig, ax = problem.render(design)
+                        ax.figure.canvas.draw()
+                        img = np.array(fig.canvas.renderer.buffer_rgba())
+                        axes[j].imshow(img)
                         axes[j].set_xticks([])  # Hide x ticks
                         axes[j].set_yticks([])  # Hide y ticks
 

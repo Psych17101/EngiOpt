@@ -116,7 +116,7 @@ def metrics(
         reference_optimum = problem.simulate(dataset_designs[i], config=conditions)
         opt_history_gaps = optimality_gap(opt_history, reference_optimum)
 
-        iog_list.append(opt_history_gaps[0])
+        iog_list.append(problem.simulate(unflattened_design, config=conditions))
         cog_list.append(np.sum(opt_history_gaps))
         fog_list.append(opt_history_gaps[-1])
 
