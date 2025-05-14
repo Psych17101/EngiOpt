@@ -30,7 +30,7 @@ class Args:
     """Random seed to run."""
     wandb_project: str = "engiopt"
     """Wandb project name."""
-    wandb_entity: str = "engibench"
+    wandb_entity: str | None = None
     """Wandb entity name."""
     n_samples: int = 10
     """Number of generated samples per seed."""
@@ -82,7 +82,7 @@ if __name__ == "__main__":
         seed=seed,
     )
 
-    ### Set Up Generator ###
+    ### Load Diffusion Model ###
     if args.wandb_entity is not None:
         artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_diffusion_1d_model:seed_{seed}"
     else:
@@ -116,10 +116,14 @@ if __name__ == "__main__":
         auto_normalize=True,
     ).to(device)
 
+    diffusion.load_state_dict(ckpt["model"])
+
     # Sample noise and generate designs
-    gen_designs = diffusion.sample(args.n_samples)
+    gen_designs = diffusion.sample(args.n_samples).squeeze(1)
     gen_designs = design_normalizer.denormalize(gen_designs)
-    gen_designs_np = gen_designs.detach().cpu().numpy().reshape(args.n_samples, -1)[:, :-padding_size]
+    gen_designs_np = gen_designs.detach().cpu().numpy()
+    if padding_size > 0:
+        gen_designs_np = gen_designs_np[:, :-padding_size]
 
     fail_ratio = metrics.simulate_failure_ratio(
         problem=problem,

@@ -16,6 +16,7 @@ from engiopt import metrics
 from engiopt.dataset_sample_conditions import sample_conditions
 from engiopt.gan_bezier.gan_bezier import Generator
 from engiopt.gan_bezier.gan_bezier import prepare_data
+from engiopt.transforms import flatten_dict_factory
 import wandb
 
 _EPS = 1e-7
@@ -33,7 +34,7 @@ class Args:
     """Wandb project name."""
     wandb_entity: str = "engibench"
     """Wandb entity name."""
-    n_samples: int = 10
+    n_samples: int = 100
     """Number of generated samples per seed."""
     sigma: float = 10.0
     """Kernel bandwidth for MMD and DPP metrics."""
@@ -92,7 +93,7 @@ if __name__ == "__main__":
     ckpt_path = os.path.join(artifact_dir, "bezier_generator.pth")
     ckpt = th.load(ckpt_path, map_location=device)
 
-    _, design_scalars_normalizer, _ = prepare_data(problem, run.config["batch_size"], device)
+    _, design_scalars_normalizer, _ = prepare_data(problem, args.n_samples, device)
 
     model = Generator(
         latent_dim=run.config["latent_dim"],
@@ -107,20 +108,28 @@ if __name__ == "__main__":
     model.eval()
 
     # Sample noise and generate designs
-    bounds = (0.0, 1.0)
+    bounds = (0.0, 1.0)  # Bounds for angle of attack
     c = (bounds[1] - bounds[0]) * th.rand(args.n_samples, run.config["latent_dim"], device=device) + bounds[0]
     z = 0.5 * th.randn(args.n_samples, run.config["noise_dim"], device=device)
     gen_designs, _, _, _, _, alphas = model(c, z)
 
-    # Reshape gen_designs to (50, 384) and add a 385th dimension from "alphas"
-    gen_designs_np = gen_designs.detach().cpu().numpy().reshape(args.n_samples, -1)
-    alphas_np = alphas.detach().cpu().numpy().reshape(args.n_samples, 1)
-    gen_designs_np = np.hstack((gen_designs_np, alphas_np))
-    print(gen_designs_np.shape)
+    gen_designs_np = gen_designs.detach().cpu().numpy()
+    alphas_np = alphas.detach().cpu().numpy()
+
+    # Reshape as dict
+    gen_designs_dict = []
+    for idx, design in enumerate(gen_designs_np):
+        d = {"coords": design, "angle_of_attack": alphas_np[idx][0]}
+        gen_designs_dict.append(d)
+
+    # Flatten dict for metrics
+    transform = flatten_dict_factory(problem, device)
+    transformed_gen_designs = transform(gen_designs_dict)
+    transformed_gen_designs = transformed_gen_designs.cpu().numpy()
 
     fail_ratio = metrics.simulate_failure_ratio(
         problem=problem,
-        gen_designs=gen_designs_np,
+        gen_designs=transformed_gen_designs,
         sampled_conditions=sampled_conditions,
     )
 

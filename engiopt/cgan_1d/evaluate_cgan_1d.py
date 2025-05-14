@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import re
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 from gymnasium import spaces
@@ -30,7 +29,7 @@ class Args:
     """Random seed to run."""
     wandb_project: str = "engiopt"
     """Wandb project name."""
-    wandb_entity: str = "engibench"
+    wandb_entity: str | None = None
     """Wandb entity name."""
     n_samples: int = 10
     """Number of generated samples per seed."""

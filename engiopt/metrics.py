@@ -6,21 +6,20 @@ optimality gap calculations.
 
 from __future__ import annotations
 
+import multiprocessing
+import os
+import traceback
 from typing import Any, TYPE_CHECKING
 
-import os
 from gymnasium import spaces
 import numpy as np
 import numpy.typing as npt
 from scipy.spatial.distance import cdist
-import multiprocessing
-import traceback
 
 if TYPE_CHECKING:
     from datasets import Dataset
     from engibench import OptiStep
     from engibench.core import Problem
-import threading
 
 multiprocessing.set_start_method("fork")
 
@@ -87,7 +86,7 @@ def simulate_failure_ratio(
     gen_designs: npt.NDArray,
     sampled_conditions: Dataset | None = None,
 ) -> float:
-    """Compute the failure ratio of generated designs.
+    """Compute the failure ratio of generated designs. This is designed for the airfoil problem.
 
     Args:
         problem: The optimization problem to evaluate.
@@ -113,7 +112,7 @@ def simulate_failure_ratio(
                     print(f"Simulation returned NaN values for design {idx}")
                     raise Exception("Simulation returned NaN values")
                 return_queue.put(("ok", objs))
-            except Exception as e:
+            except Exception:
                 return_queue.put(("error", traceback.format_exc()))
 
         # Attempt to simulate the design
@@ -153,7 +152,6 @@ def metrics(
     gen_designs: npt.NDArray,
     dataset_designs: npt.NDArray,
     sampled_conditions: Dataset | None = None,
-    constraint_key: str | None = None,
     sigma: float = 1.0,
 ) -> dict[str, Any]:
     """Compute various metrics for evaluating generative model designs.
@@ -181,8 +179,6 @@ def metrics(
     viol_list = []
     for i in range(n_samples):
         conditions = sampled_conditions[i] if sampled_conditions is not None else None
-        if conditions and "volfrac" not in conditions and "volume" not in conditions:
-            conditions["beta_initial"] = 150
         if isinstance(problem.design_space, spaces.Dict):
             # Need to unflatten the design to be used for optimization or simulation
             unflattened_design = spaces.unflatten(problem.design_space, gen_designs[i])
@@ -196,13 +192,12 @@ def metrics(
         cog_list.append(np.sum(opt_history_gaps))
         fog_list.append(opt_history_gaps[-1])
 
-        # If conditions dict has a key 'volfrac', check if the value is greater than 0.5
-        if conditions and "volfrac" in conditions:
-            viol = np.abs(np.mean(unflattened_design) - conditions["volfrac"]) >= 0.01
-            viol_list.append(viol)
-        elif conditions and "volume" in conditions:
-            viol = np.abs(np.mean(unflattened_design) - conditions["volume"]) >= 0.01
-            viol_list.append(viol)
+        # Check if conditions dict has 'volfrac' or 'volume' key and compare with design mean
+        if conditions:
+            target_vol = conditions.get("volfrac") or conditions.get("volume")
+            if target_vol is not None:
+                viol = np.abs(np.mean(unflattened_design) - target_vol) >= 0.01
+                viol_list.append(viol)
 
     # Compute the average Initial Optimality Gap (IOG), Cumulative Optimality Gap (COG), and Final Optimality Gap (FOG)
     average_iog: float = float(np.mean(iog_list))  # Average of initial optimality gaps
