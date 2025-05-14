@@ -51,6 +51,7 @@ def prepare_data(problem: Problem, padding_size: int, device: th.device) -> tupl
 
     Args:
         problem (Problem): The problem to prepare the data for.
+        padding_size (int): The size of padding to add to the data.
         device (th.device): The device to prepare the data on.
 
     Returns:

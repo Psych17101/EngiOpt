@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import os
+from typing import TYPE_CHECKING
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
-from gymnasium import spaces
 import numpy as np
 import pandas as pd
 import torch as th
@@ -18,6 +18,9 @@ from engiopt.gan_bezier.gan_bezier import Generator
 from engiopt.gan_bezier.gan_bezier import prepare_data
 from engiopt.transforms import flatten_dict_factory
 import wandb
+
+if TYPE_CHECKING:
+    from gymnasium import spaces
 
 _EPS = 1e-7
 

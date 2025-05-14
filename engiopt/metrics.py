@@ -81,7 +81,7 @@ def optimality_gap(opt_history: list[OptiStep], baseline: float) -> list[float]:
     return [opt.obj_values - baseline for opt in opt_history]
 
 
-def simulate_failure_ratio(
+def simulate_failure_ratio(  # noqa: C901
     problem: Problem,
     gen_designs: npt.NDArray,
     sampled_conditions: Dataset | None = None,
@@ -107,12 +107,12 @@ def simulate_failure_ratio(
 
         def worker(idx, config, return_queue):
             try:
-                objs = problem.simulate(unflattened_design, config=config, mpicores=10)
+                objs = problem.simulate(unflattened_design, config=config, mpicores=10)  # noqa: B023
                 if np.isnan(objs[0]) or np.isnan(objs[1]):
                     print(f"Simulation returned NaN values for design {idx}")
-                    raise Exception("Simulation returned NaN values")
+                    raise Exception("Simulation returned NaN values")  # noqa: TRY002, TRY301
                 return_queue.put(("ok", objs))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return_queue.put(("error", traceback.format_exc()))
 
         # Attempt to simulate the design
@@ -126,7 +126,7 @@ def simulate_failure_ratio(
             if p.is_alive():
                 p.terminate()  # force-kill the child process
                 p.join()
-                os.system("docker stop machaero")
+                os.system("docker stop machaero")  # noqa: S605
                 raise RuntimeError(f"Simulation timed out for design {idx}")
 
             if not q.empty():
@@ -194,9 +194,10 @@ def metrics(
 
         # Check if conditions dict has 'volfrac' or 'volume' key and compare with design mean
         if conditions:
+            tol = 0.01  # Tolerance for equality constraint deviation
             target_vol = conditions.get("volfrac") or conditions.get("volume")
             if target_vol is not None:
-                viol = np.abs(np.mean(unflattened_design) - target_vol) >= 0.01
+                viol = np.abs(np.mean(unflattened_design) - target_vol) >= tol
                 viol_list.append(viol)
 
     # Compute the average Initial Optimality Gap (IOG), Cumulative Optimality Gap (COG), and Final Optimality Gap (FOG)
