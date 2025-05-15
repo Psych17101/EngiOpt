@@ -29,7 +29,7 @@ class Args:
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
-    n_samples: int = 1
+    n_samples: int = 50
     """Number of generated samples per seed."""
     sigma: float = 10.0
     """Kernel bandwidth for MMD and DPP metrics."""

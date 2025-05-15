@@ -25,11 +25,11 @@ class Args:
 
     problem_id: str = "beams2d"
     """Problem identifier."""
-    seed: int = 7
+    seed: int = 1
     """Random seed to run."""
     wandb_project: str = "engiopt"
     """Wandb project name."""
-    wandb_entity: str = "engibench"
+    wandb_entity: str | None = None
     """Wandb entity name."""
     n_samples: int = 50
     """Number of generated samples per seed."""
