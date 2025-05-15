@@ -90,6 +90,7 @@ class Normalizer:
 class Generator(nn.Module):
     def __init__(self, latent_dim: int, design_shape: tuple[int, ...], design_normalizer: Normalizer):
         super().__init__()
+        self.design_shape = design_shape  # Store design shape
         self.design_normalizer = design_normalizer
 
         def block(in_feat: int, out_feat: int, normalize: bool = True) -> list[nn.Module]:  # noqa: FBT001, FBT002
@@ -110,7 +111,7 @@ class Generator(nn.Module):
 
     def forward(self, z: th.Tensor) -> th.Tensor:
         design = self.model(z)
-        return self.design_normalizer.denormalize(design.view(design.size(0), *design_shape))
+        return self.design_normalizer.denormalize(design.view(design.size(0), *self.design_shape))
 
 
 class Discriminator(nn.Module):
