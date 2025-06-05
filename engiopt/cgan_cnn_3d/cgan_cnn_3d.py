@@ -483,6 +483,8 @@ if __name__ == "__main__":
     # ----------
     print("Starting 3D GAN training...")
     
+    last_disc_acc = 0.0  # Track discriminator accuracy
+
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # Extract 3D designs and conditions
@@ -509,7 +511,6 @@ if __name__ == "__main__":
             # Sample noise for 3D generation
             z = th.randn((batch_size, args.latent_dim, 1, 1, 1), device=device, dtype=th.float)
 
-        
             # Generate 3D designs
             gen_designs_3d = generator(z, conds)
             
@@ -523,27 +524,49 @@ if __name__ == "__main__":
             optimizer_generator.step()
 
             # ---------------------
-            #  Train Discriminator
+            #  Train Discriminator (adaptive)
             # ---------------------
-            optimizer_discriminator.zero_grad()
+            # Compute discriminator predictions for real and fake
+            with th.no_grad():
+                real_pred = discriminator(designs_3d, conds)
+                fake_pred = discriminator(gen_designs_3d.detach(), conds)
+                # Flatten and threshold at 0.5 for accuracy
+                real_acc = (real_pred > 0.5).float().mean().item()
+                fake_acc = (fake_pred < 0.5).float().mean().item()
+                disc_acc = 0.5 * (real_acc + fake_acc)
+                last_disc_acc = disc_acc
 
-            
-            # Real loss
-            real_loss = adversarial_loss(
-                discriminator(designs_3d, conds), 
-                valid
-            )
-            
-            # Fake loss
-            fake_loss = adversarial_loss(
-                discriminator(gen_designs_3d.detach(), conds), 
-                fake
-            )
-            
-            d_loss = (real_loss + fake_loss) / 2
-            
-            d_loss.backward()
-            optimizer_discriminator.step()
+            if last_disc_acc <= 0.8:
+                optimizer_discriminator.zero_grad()
+
+                # Real loss
+                real_loss = adversarial_loss(
+                    discriminator(designs_3d, conds), 
+                    valid
+                )
+                
+                # Fake loss
+                fake_loss = adversarial_loss(
+                    discriminator(gen_designs_3d.detach(), conds), 
+                    fake
+                )
+                
+                d_loss = (real_loss + fake_loss) / 2
+                
+                d_loss.backward()
+                optimizer_discriminator.step()
+            else:
+                # Still need to define d_loss, real_loss, fake_loss for logging
+                with th.no_grad():
+                    real_loss = adversarial_loss(
+                        discriminator(designs_3d, conds), 
+                        valid
+                    )
+                    fake_loss = adversarial_loss(
+                        discriminator(gen_designs_3d.detach(), conds), 
+                        fake
+                    )
+                    d_loss = (real_loss + fake_loss) / 2
 
             # ----------
             #  Logging
