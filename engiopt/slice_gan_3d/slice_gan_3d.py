@@ -675,40 +675,55 @@ if __name__ == "__main__":
             fake = th.zeros((batch_size, 1, 1, 1), requires_grad=False, device=device)
             
             # -----------------
-            #  Train Generators
+            #  Train Generators (with 2x batch size)
             # -----------------
             gen_losses = {}
             fake_slices = {}
-            
+
             for axis_name, generator in slice_generators.items():
                 optimizer_generators[axis_name].zero_grad()
-                
-                # Sample noise and positions for generation
-                z = th.randn((batch_size, args.latent_dim, 1, 1), device=device, dtype=th.float)
-                gen_positions = th.rand((batch_size, 1, 1, 1), device=device)
-                slice_conds_2d = conds.unsqueeze(2).unsqueeze(3)  # (B, n_conds, 1, 1)
-                
+
+                # Use 2x batch size for generator
+                gen_batch_size = batch_size * 2 
+                z = th.randn((gen_batch_size, args.latent_dim, 1, 1), device=device, dtype=th.float)
+                gen_positions = th.rand((gen_batch_size, 1, 1, 1), device=device)
+                # Repeat conditions to match generator batch size
+                slice_conds_2d = conds.repeat(2, 1).unsqueeze(2).unsqueeze(3)  # (2B, n_conds, 1, 1)
+
                 # Generate fake slices
                 fake_slice = generator(z, slice_conds_2d, gen_positions)
-                fake_slices[axis_name] = fake_slice
-                
-                # Generator loss
+                fake_slices[axis_name] = fake_slice[:batch_size]  # Only use first B for discriminator training
+
+                # Generator loss (only use first B samples for loss to match valid label shape)
                 g_loss = adversarial_loss(
-                    slice_discriminators[axis_name](fake_slice, slice_conds_2d, gen_positions),
+                    slice_discriminators[axis_name](fake_slice[:batch_size], slice_conds_2d[:batch_size], gen_positions[:batch_size]),
                     valid
                 )
-                
+
                 g_loss.backward()
                 optimizer_generators[axis_name].step()
                 gen_losses[axis_name] = g_loss.item()
-            
             # ---------------------
             #  Train Discriminators (adaptive)
             # ---------------------
             disc_losses = {}
             real_losses = {}
             fake_losses = {}
-            
+            # Ensure at least 32 slices per axis for discriminator training
+            min_slices = 32
+            for axis_name in real_slices:
+                n_real = real_slices[axis_name].shape[0]
+                if n_real < min_slices:
+                    # Repeat slices to reach min_slices
+                    reps = (min_slices + n_real - 1) // n_real
+                    real_slices[axis_name] = real_slices[axis_name].repeat((reps, 1, 1, 1))[:min_slices]
+                    slice_positions[axis_name] = slice_positions[axis_name].repeat(reps)[:min_slices]
+                    slice_conds[axis_name] = slice_conds[axis_name].repeat(reps, 1)[:min_slices]
+                # Also ensure fake_slices and gen_positions for D match min_slices
+                fake_slices[axis_name] = fake_slices[axis_name].repeat((min_slices, 1, 1, 1))[:min_slices]
+                gen_positions = th.rand((min_slices, 1, 1, 1), device=device)
+                slice_conds_2d = slice_conds[axis_name].unsqueeze(2).unsqueeze(3)
+
             for axis_name, discriminator in slice_discriminators.items():
                 # Get real slices and positions for this axis
                 real_slice = real_slices[axis_name]
