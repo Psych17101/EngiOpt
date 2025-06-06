@@ -311,7 +311,7 @@ class SliceDiscriminator2D(nn.Module):
         # Final classification
         self.final_conv = nn.Sequential(
             nn.Conv2d(num_filters[3], out_channels, kernel_size=4, stride=1, padding=0, bias=False),
-            nn.Sigmoid()
+
         )
 
     def forward(self, x: th.Tensor, design_conds: th.Tensor, slice_pos: th.Tensor) -> th.Tensor:
@@ -580,9 +580,6 @@ if __name__ == "__main__":
         shuffle=True,
     )
 
-    # Loss function
-    adversarial_loss = th.nn.BCELoss()
-
     # Create separate optimizers for each generator and discriminator
     optimizer_generators = {}
     optimizer_discriminators = {}
@@ -670,10 +667,6 @@ if __name__ == "__main__":
                 slice_positions['yz'] = yz_positions
                 slice_conds['yz'] = conds.repeat_interleave(n_slices_yz, dim=0)
             
-            # Adversarial ground truths
-            valid = th.ones((batch_size, 1, 1, 1), requires_grad=False, device=device)
-            fake = th.zeros((batch_size, 1, 1, 1), requires_grad=False, device=device)
-            
             # -----------------
             #  Train Generators (with 2x batch size)
             # -----------------
@@ -694,11 +687,10 @@ if __name__ == "__main__":
                 fake_slice = generator(z, slice_conds_2d, gen_positions)
                 fake_slices[axis_name] = fake_slice[:batch_size]  # Only use first B for discriminator training
 
-                # Generator loss (only use first B samples for loss to match valid label shape)
-                g_loss = adversarial_loss(
-                    slice_discriminators[axis_name](fake_slice[:batch_size], slice_conds_2d[:batch_size], gen_positions[:batch_size]),
-                    valid
-                )
+                # Generator loss - Wasserstein Loss
+                g_loss = g_loss = -slice_discriminators[axis_name](
+                    fake_slice[:batch_size], slice_conds_2d[:batch_size], gen_positions[:batch_size]
+                ).mean()
 
                 g_loss.backward()
                 optimizer_generators[axis_name].step()
@@ -709,6 +701,7 @@ if __name__ == "__main__":
             disc_losses = {}
             real_losses = {}
             fake_losses = {}
+            
             # Ensure at least 32 slices per axis for discriminator training
             min_slices = 32
             for axis_name in real_slices:
@@ -719,27 +712,30 @@ if __name__ == "__main__":
                     real_slices[axis_name] = real_slices[axis_name].repeat((reps, 1, 1, 1))[:min_slices]
                     slice_positions[axis_name] = slice_positions[axis_name].repeat(reps)[:min_slices]
                     slice_conds[axis_name] = slice_conds[axis_name].repeat(reps, 1)[:min_slices]
-                # Also ensure fake_slices and gen_positions for D match min_slices
-                fake_slices[axis_name] = fake_slices[axis_name].repeat((min_slices, 1, 1, 1))[:min_slices]
-                gen_positions = th.rand((min_slices, 1, 1, 1), device=device)
-                slice_conds_2d = slice_conds[axis_name].unsqueeze(2).unsqueeze(3)
 
             for axis_name, discriminator in slice_discriminators.items():
                 # Get real slices and positions for this axis
                 real_slice = real_slices[axis_name]
-                real_pos = slice_positions[axis_name].unsqueeze(1).unsqueeze(2).unsqueeze(3)  # (B*n_slices, 1, 1, 1)
-                real_slice_conds = slice_conds[axis_name].unsqueeze(2).unsqueeze(3)  # (B*n_slices, n_conds, 1, 1)
+                real_pos = slice_positions[axis_name].unsqueeze(1).unsqueeze(2).unsqueeze(3)  # (n_real_slices, 1, 1, 1)
+                real_slice_conds = slice_conds[axis_name].unsqueeze(2).unsqueeze(3)  # (n_real_slices, n_conds, 1, 1)
+                
+                # Get fake slices for this axis - ensure they match real slice count
+                n_real_slices = real_slice.shape[0]
                 fake_slice = fake_slices[axis_name]
                 
-                # Create valid/fake labels for the number of real slices
-                n_real_slices = real_slice.shape[0]
-                valid_real = th.ones((n_real_slices, 1, 1, 1), requires_grad=False, device=device)
-                fake_real = th.zeros((n_real_slices, 1, 1, 1), requires_grad=False, device=device)
+                # If fake_slice batch size doesn't match real_slice, repeat it
+                if fake_slice.shape[0] != n_real_slices:
+                    reps = (n_real_slices + fake_slice.shape[0] - 1) // fake_slice.shape[0]
+                    fake_slice = fake_slice.repeat((reps, 1, 1, 1))[:n_real_slices]
+                
+                # Generate positions and conditions for fake slices to match real slice count
+                fake_pos = th.rand((n_real_slices, 1, 1, 1), device=device)
+                fake_slice_conds = slice_conds[axis_name].unsqueeze(2).unsqueeze(3)  # (n_real_slices, n_conds, 1, 1)
                 
                 # Compute discriminator predictions for real and fake
                 with th.no_grad():
                     real_pred = discriminator(real_slice, real_slice_conds, real_pos)
-                    fake_pred = discriminator(fake_slice.detach(), slice_conds_2d, gen_positions)
+                    fake_pred = discriminator(fake_slice.detach(), fake_slice_conds, fake_pos)
                     
                     # Flatten and threshold at 0.5 for accuracy
                     real_acc = (real_pred > 0.5).float().mean().item()
@@ -751,33 +747,28 @@ if __name__ == "__main__":
                     optimizer_discriminators[axis_name].zero_grad()
                     
                     # Real loss
-                    real_loss = adversarial_loss(
-                        discriminator(real_slice, real_slice_conds, real_pos),
-                        valid_real
-                    )
-                    
-                    # Fake loss
-                    fake_loss = adversarial_loss(
-                        discriminator(fake_slice.detach(), slice_conds_2d, gen_positions),
-                        fake
-                    )
-                    
-                    d_loss = (real_loss + fake_loss) / 2
+                    real_score = discriminator(real_slice, real_slice_conds, real_pos).mean()
+                    # Fake Loss
+                    fake_score = discriminator(fake_slice.detach(), fake_slice_conds, fake_pos).mean()
+                    # Discriminator Loss - Wasserstein
+                    d_loss = -(real_score - fake_score)
                     
                     d_loss.backward()
                     optimizer_discriminators[axis_name].step()
+                    
+                    for p in discriminator.parameters():
+                        p.data.clamp_(-0.01, 0.01)
+                    
+                    # For logging, set real_loss/fake_loss as Wasserstein scores
+                    real_loss = -real_score
+                    fake_loss = fake_score
                 else:
-                    # Still need to define losses for logging
-                    with th.no_grad():
-                        real_loss = adversarial_loss(
-                            discriminator(real_slice, real_slice_conds, real_pos),
-                            valid_real
-                        )
-                        fake_loss = adversarial_loss(
-                            discriminator(fake_slice.detach(), slice_conds_2d, gen_positions),
-                            fake
-                        )
-                        d_loss = (real_loss + fake_loss) / 2
+                    # Skip update, but still log Wasserstein scores
+                    real_score = discriminator(real_slice, real_slice_conds, real_pos).mean()
+                    fake_score = discriminator(fake_slice.detach(), fake_slice_conds, fake_pos).mean()
+                    d_loss = -(real_score - fake_score)
+                    real_loss = -real_score
+                    fake_loss = fake_score
                 
                 disc_losses[axis_name] = d_loss.item()
                 real_losses[axis_name] = real_loss.item()
