@@ -385,6 +385,7 @@ class SliceGAN3D(nn.Module):
         # Generate XY slices (along Z axis)
         if 'xy' in self.slice_generators:
             for z_idx in range(D):
+                # Fix: Create z_pos with correct batch size
                 z_pos = th.full((batch_size, 1, 1, 1), z_idx / (D - 1), device=z.device)
                 xy_slice = self.slice_generators['xy'](z_2d, design_conds_2d, z_pos)  # (B, 1, H, W)
                 volume[:, :, z_idx, :, :] += xy_slice
@@ -393,6 +394,7 @@ class SliceGAN3D(nn.Module):
         # Generate XZ slices (along Y axis)  
         if 'xz' in self.slice_generators:
             for y_idx in range(H):
+                # Fix: Create y_pos with correct batch size
                 y_pos = th.full((batch_size, 1, 1, 1), y_idx / (H - 1), device=z.device)
                 xz_slice = self.slice_generators['xz'](z_2d, design_conds_2d, y_pos)  # (B, 1, D, W)
                 volume[:, :, :, y_idx, :] += xz_slice
@@ -401,6 +403,7 @@ class SliceGAN3D(nn.Module):
         # Generate YZ slices (along X axis)
         if 'yz' in self.slice_generators:
             for x_idx in range(W):
+                # Fix: Create x_pos with correct batch size
                 x_pos = th.full((batch_size, 1, 1, 1), x_idx / (W - 1), device=z.device)
                 yz_slice = self.slice_generators['yz'](z_2d, design_conds_2d, x_pos)  # (B, 1, D, H)
                 volume[:, :, :, :, x_idx] += yz_slice
@@ -598,11 +601,8 @@ if __name__ == "__main__":
 
     @th.no_grad()
     def sample_3d_designs(n_designs: int) -> tuple[th.Tensor, th.Tensor]:
-        """Sample n_designs 3D volumes from the SliceGAN."""
+        """Sample n_designs^n_conditions 3D volumes from the SliceGAN."""
         slicegan.eval()
-        
-        # Sample noise
-        z = th.randn((n_designs, args.latent_dim), device=device, dtype=th.float)
 
         # Create condition grid
         all_conditions = th.stack(condition_tensors, dim=1)
@@ -610,12 +610,16 @@ if __name__ == "__main__":
             th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_designs, device=device) 
             for i in range(all_conditions.shape[1])
         ]
-
         desired_conds = th.stack(th.meshgrid(*linspaces, indexing='ij'), dim=-1).reshape(-1, all_conditions.shape[1])
-        
+
+        # Match z size to number of condition combinations
+        total_samples = desired_conds.shape[0]
+        z = th.randn((total_samples, args.latent_dim), device=device, dtype=th.float)
+
         gen_volumes = slicegan.generate_volume(z, desired_conds)
         slicegan.train()
         return gen_volumes, desired_conds
+
     
     
     # ------ Training Loop ------
