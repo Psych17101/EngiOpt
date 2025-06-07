@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
+import torch.autograd as autograd
 import torch.nn.functional as F
 import tqdm
 import tyro
@@ -70,7 +71,7 @@ class Args:
 
 def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_names: list, 
                         save_path: str, max_designs: int = 9):
-    """Visualize 3D volumes by showing cross-sectional slices.
+    """Visualize 3D volumes by showing cross-sectional slices with a red-white heatmap.
     
     Args:
         volumes: (N, 1, D, H, W) tensor of 3D designs
@@ -95,20 +96,23 @@ def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_na
         vol = volumes[i, 0].cpu().numpy()  # Remove channel dimension
         D, H, W = vol.shape
         
+        # Use 'Reds_r' colormap: low=red, high=white
+        cmap = plt.get_cmap('Reds_r')
+        
         # XY slice (middle Z)
-        axes[i, 0].imshow(vol[D//2, :, :], cmap='viridis', vmin=-1, vmax=1)
+        axes[i, 0].imshow(vol[D//2, :, :], cmap=cmap, vmin=-1, vmax=1)
         axes[i, 0].set_title(f'Design {i+1} - XY slice (z={D//2})')
         axes[i, 0].set_xticks([])
         axes[i, 0].set_yticks([])
         
         # XZ slice (middle Y)
-        axes[i, 1].imshow(vol[:, H//2, :], cmap='viridis', vmin=-1, vmax=1)
+        axes[i, 1].imshow(vol[:, H//2, :], cmap=cmap, vmin=-1, vmax=1)
         axes[i, 1].set_title(f'Design {i+1} - XZ slice (y={H//2})')
         axes[i, 1].set_xticks([])
         axes[i, 1].set_yticks([])
         
         # YZ slice (middle X)
-        axes[i, 2].imshow(vol[:, :, W//2], cmap='viridis', vmin=-1, vmax=1)
+        axes[i, 2].imshow(vol[:, :, W//2], cmap=cmap, vmin=-1, vmax=1)
         axes[i, 2].set_title(f'Design {i+1} - YZ slice (x={W//2})')
         axes[i, 2].set_xticks([])
         axes[i, 2].set_yticks([])
@@ -124,6 +128,31 @@ def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_na
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
+    
+def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=10.0):
+    """Calculates the gradient penalty loss for WGAN GP"""
+    batch_size = real_samples.size(0)
+    # Random weight term for interpolation between real and fake samples
+    alpha = th.rand(batch_size, 1, 1, 1, 1, device=device)
+    alpha = alpha.expand_as(real_samples)
+    # Get interpolated samples
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    d_interpolates = discriminator(interpolates, conds)
+    # For multi-dimensional output, take mean
+    fake = th.ones_like(d_interpolates, device=device, requires_grad=False)
+    # Get gradient w.r.t. interpolates
+    gradients = autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=fake,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    gradients = gradients.view(batch_size, -1)
+    gradient_norm = gradients.norm(2, dim=1)
+    gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
+    return gradient_penalty
 
 class Generator3D(nn.Module):
     """3D Conditional GAN generator that outputs volumetric designs.
@@ -275,7 +304,7 @@ class Discriminator3D(nn.Module):
         # Final classification layer
         self.final_conv = nn.Sequential(
             nn.Conv3d(num_filters[4], out_channels, kernel_size=2, stride=1, padding=0, bias=False),
-            nn.Sigmoid()
+            # nn.Sigmoid() # Removed for WGAN-GP compatibility
         )
 
     def forward(self, x: th.Tensor, c: th.Tensor) -> th.Tensor:
@@ -502,71 +531,32 @@ if __name__ == "__main__":
             # Adversarial ground truths
             valid = th.ones((batch_size, 1, 1, 1, 1), requires_grad=False, device=device)
             fake = th.zeros((batch_size, 1, 1, 1, 1), requires_grad=False, device=device)
-
+            # -----------------
+            #  Sample noise and generate fake 3D designs
+            z = th.randn((batch_size, args.latent_dim, 1, 1, 1), device=device)
+            gen_designs_3d = generator(z, conds)
             # -----------------
             #  Train Generator
             # -----------------
             optimizer_generator.zero_grad()
-
-            # Sample noise for 3D generation
-            z = th.randn((batch_size, args.latent_dim, 1, 1, 1), device=device, dtype=th.float)
-
-            # Generate 3D designs
-            gen_designs_3d = generator(z, conds)
-            
-            # Generator loss
-            g_loss = adversarial_loss(
-                discriminator(gen_designs_3d, conds), 
-                valid
-            )
-            
+            # Generator loss: maximize D(G(z)), so minimize -D(G(z))
+            g_loss = -discriminator(gen_designs_3d, conds).mean()
             g_loss.backward()
             optimizer_generator.step()
 
             # ---------------------
-            #  Train Discriminator (adaptive)
+            #  Train Discriminator (WGAN-GP)
             # ---------------------
-            # Compute discriminator predictions for real and fake
-            with th.no_grad():
-                real_pred = discriminator(designs_3d, conds)
-                fake_pred = discriminator(gen_designs_3d.detach(), conds)
-                # Flatten and threshold at 0.5 for accuracy
-                real_acc = (real_pred > 0.5).float().mean().item()
-                fake_acc = (fake_pred < 0.5).float().mean().item()
-                disc_acc = 0.5 * (real_acc + fake_acc)
-                last_disc_acc = disc_acc
-
-            if last_disc_acc <= 0.8:
-                optimizer_discriminator.zero_grad()
-
-                # Real loss
-                real_loss = adversarial_loss(
-                    discriminator(designs_3d, conds), 
-                    valid
-                )
-                
-                # Fake loss
-                fake_loss = adversarial_loss(
-                    discriminator(gen_designs_3d.detach(), conds), 
-                    fake
-                )
-                
-                d_loss = (real_loss + fake_loss) / 2
-                
-                d_loss.backward()
-                optimizer_discriminator.step()
-            else:
-                # Still need to define d_loss, real_loss, fake_loss for logging
-                with th.no_grad():
-                    real_loss = adversarial_loss(
-                        discriminator(designs_3d, conds), 
-                        valid
-                    )
-                    fake_loss = adversarial_loss(
-                        discriminator(gen_designs_3d.detach(), conds), 
-                        fake
-                    )
-                    d_loss = (real_loss + fake_loss) / 2
+            optimizer_discriminator.zero_grad()
+            real_validity = discriminator(designs_3d, conds)
+            fake_validity = discriminator(gen_designs_3d.detach(), conds)
+            # Wasserstein loss
+            d_loss = -real_validity.mean() + fake_validity.mean()
+            # Gradient penalty
+            gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, gen_designs_3d.detach(), conds, device)
+            d_loss += gradient_penalty
+            d_loss.backward()
+            optimizer_discriminator.step()
 
             # ----------
             #  Logging
@@ -577,8 +567,8 @@ if __name__ == "__main__":
                 wandb.log({
                     "d_loss": d_loss.item(),
                     "g_loss": g_loss.item(),
-                    "real_loss": real_loss.item(),
-                    "fake_loss": fake_loss.item(),
+                    #"real_loss": real_loss.item(),
+                    #"fake_loss": fake_loss.item(),
                     "epoch": epoch,
                     "batch": batches_done,
                 })
@@ -658,3 +648,24 @@ if __name__ == "__main__":
         wandb.finish()
     
     print("3D GAN training completed!")
+
+    # ---- Export final generated 3D designs for ParaView ----
+    print("Exporting final generated 3D designs for ParaView...")
+    generator.eval()
+    n_export = 8  # Number of designs to export
+    z = th.randn((n_export, args.latent_dim, 1, 1, 1), device=device)
+    all_conditions = th.stack(condition_tensors, dim=1)
+    linspaces = [
+        th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_export, device=device)
+        for i in range(all_conditions.shape[1])
+    ]
+    export_conds = th.stack(linspaces, dim=1)
+    gen_volumes = generator(z, export_conds.reshape(-1, n_conds, 1, 1, 1))
+    gen_volumes_np = gen_volumes.squeeze(1).detach().cpu().numpy()
+
+    os.makedirs("paraview_exports", exist_ok=True)
+    for i, vol in enumerate(gen_volumes_np):
+        np.save(f"paraview_exports/gen3d_{i}.npy", vol)
+        # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
+
+    print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
