@@ -129,7 +129,7 @@ def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_na
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=10.0):
+def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
     """Calculates the gradient penalty loss for WGAN GP"""
     batch_size = real_samples.size(0)
     # Random weight term for interpolation between real and fake samples
