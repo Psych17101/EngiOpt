@@ -73,6 +73,8 @@ class Args:
     # Multiview parameters
     n_views: int = 3
     """Number of views for multiview rendering"""
+    n_slices: int = 9
+    """Number of slices to extract from each volume for training"""
     use_multiview: bool = True
     """Enable multiview consistency loss"""
     multiview_weight: float = 0.1
@@ -135,7 +137,7 @@ def reparameterize(mu: th.Tensor, logvar: th.Tensor) -> th.Tensor:
     return mu + eps * std
 
 
-def kl_divergence(mu: th.Tensor, logvar: th.Tensor) -> th.Tensor:
+def kl_divergence(mu: th.Tensor, logvar: th.Tensor, ) -> th.Tensor:
     """Calculate KL divergence for VAE."""
     return -0.5 * th.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
@@ -160,7 +162,7 @@ def render_multiview(volume: th.Tensor, n_views: int = 3) -> th.Tensor:
     return views[:n_views]
 
 
-class Encoder3D(nn.Module):
+class Encoder(nn.Module):
     """3D Encoder for VAE - produces latent mean and log-variance."""
 
     def __init__(
@@ -174,29 +176,29 @@ class Encoder3D(nn.Module):
 
         self.encoder = nn.Sequential(
             # 64 → 32
-            nn.Conv3d(in_channels, num_filters[0], kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm3d(num_filters[0]),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(in_channels, num_filters[0], kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_filters[0]),
+            nn.ReLU(inplace=True),
 
             # 32 → 16
-            nn.Conv3d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm3d(num_filters[1]),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_filters[1]),
+            nn.ReLU(inplace=True),
 
             # 16 → 8
-            nn.Conv3d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm3d(num_filters[2]),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_filters[2]),
+            nn.ReLU(inplace=True),
 
             # 8 → 4
-            nn.Conv3d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm3d(num_filters[3]),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_filters[3]),
+            nn.ReLU(inplace=True),
 
             # 4 → 2
-            nn.Conv3d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm3d(num_filters[4]),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_filters[4]),
+            nn.ReLU(inplace=True),
         )
 
         # Calculate flattened dimension
@@ -216,7 +218,7 @@ class Encoder3D(nn.Module):
         logvar = self.fc_logvar(h)
         return mu, logvar
 
-# could possible just import class from cgan_cnn_3d.py
+# Could possible just import class from cgan_cnn_3d.py
 class Generator3D(nn.Module):
     """3D Generator - can work as both VAE decoder and GAN generator."""
 
@@ -418,7 +420,7 @@ if __name__ == "__main__":
     reconstruction_loss = th.nn.MSELoss()
 
     # Initialize models
-    encoder = Encoder3D(latent_dim=args.latent_dim)
+    encoder = Encoder(latent_dim=args.latent_dim)
     generator = Generator3D(
         latent_dim=args.latent_dim, 
         n_conds=n_conds, 
@@ -480,94 +482,119 @@ if __name__ == "__main__":
     # Training loop
     print("Starting 3D VAE-GAN training...")
     
+    # Initialize multiview_loss tensor outside the loop
+    multiview_loss = th.tensor(0.0, device=device)
+    
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
-            designs_3d = data[0].unsqueeze(1)  # Add channel dim
+            multiview_loss.zero_()  # Reset the tensor at the start of each iteration
+            designs_3d = data[0].unsqueeze(1)  # (B, 1, D, H, W)
             condition_data = data[1:]
             conds = th.stack(condition_data, dim=1)
             conds_expanded = conds.reshape(-1, n_conds, 1, 1, 1)
             
-            batch_size = designs_3d.size(0)
+            batch_size, _, D, H, W = designs_3d.shape
             
-            # Ground truth labels
             valid = th.ones((batch_size, 1, 1, 1, 1), device=device)
             fake = th.zeros((batch_size, 1, 1, 1, 1), device=device)
 
-            # ==================
-            # Train VAE (Encoder + Generator)
-            # ==================
-            optimizer_encoder.zero_grad()
-            optimizer_generator.zero_grad()
-            
-            # Encode real data
-            mu, logvar = encoder(designs_3d)
+            # --- Extract a subset of XY slices from each volume ---
+            n_slices = min(args.n_slices, D)  # You can set n_slices as desired
+            slice_indices = th.linspace(0, D - 1, n_slices).long()
+            # Result: (B, n_slices, 1, H, W)
+            slices = designs_3d[:, :, slice_indices, :, :]  # (B, 1, n_slices, H, W)
+            slices = slices.permute(0, 2, 1, 3, 4)          # (B, n_slices, 1, H, W)
+            slices = slices.reshape(-1, 1, H, W)             # (B*n_slices, 1, H, W)
+
+            # Pass all slices through encoder
+            mu, logvar = encoder(slices)                 # (B*D, latent_dim)
+
+            # Compute mean KL divergence over all slices
+            mvkl_loss = kl_divergence(mu, logvar) / mu.size(0)  # mu.size(0) == B*D
+
+            # Reshape for aggregation if needed
+            mu = mu.view(batch_size, D, -1)              # (B, D, latent_dim)
+            logvar = logvar.view(batch_size, D, -1)      # (B, D, latent_dim)
+
+            # Average latent vectors for each volume - Mean Pooling
+            mu = mu.mean(dim=1)                          # (B, latent_dim)
+            logvar = logvar.mean(dim=1)                  # (B, latent_dim)
+
             z_encoded = reparameterize(mu, logvar)
-            
+
             # Reconstruct
             reconstructed = generator(z_encoded, conds)
             
             # VAE losses
             recon_loss = reconstruction_loss(reconstructed, designs_3d)
-            kl_loss = kl_divergence(mu, logvar) / batch_size
             
-            # GAN loss for generator (fool discriminator)
+            # ==================
+            # Train Encoder
+            # ==================
+            
+            
+            optimizer_encoder.zero_grad()
+            E_loss = args.recon_weight * recon_loss + args.kl_weight * mvkl_loss
+            E_loss.backward(retain_graph=True)
+            optimizer_encoder.step()
+
+            
+            # ==================
+            # Train Generator
+            # ==================
+            
+            # GAN loss for generator
+            optimizer_generator.zero_grad()
             g_loss_adv = adversarial_loss(
                 discriminator(reconstructed, conds_expanded), valid
             )
             
-            # Multiview consistency loss
-            multiview_loss = th.tensor(0.0, device=device)
-            if args.use_multiview:
-                real_views = render_multiview(designs_3d, args.n_views)
-                recon_views = render_multiview(reconstructed, args.n_views)
-                for real_view, recon_view in zip(real_views, recon_views):
-                    multiview_loss += F.mse_loss(recon_view, real_view)
-                multiview_loss /= len(real_views)
-            
-            # Combined VAE loss
-            vae_loss = (args.recon_weight * recon_loss + 
-                       args.kl_weight * kl_loss + 
-                       g_loss_adv +
-                       args.multiview_weight * multiview_loss)
-            
-            vae_loss.backward()
-            optimizer_encoder.step()
+            g_loss = g_loss_adv + args.recon_weight* recon_loss
+            g_loss.backward()
             optimizer_generator.step()
+            
 
             # ==================
             # Train Discriminator
             # ==================
-            optimizer_discriminator.zero_grad()
+            d_real_acc = (discriminator(designs_3d, conds_expanded) > 0.5).float().mean()
+            d_fake_acc = (discriminator(reconstructed.detach(), conds_expanded) < 0.5).float().mean()
+            d_total_acc = (d_real_acc + d_fake_acc) / 2
             
-            # Real loss
-            real_loss = adversarial_loss(
-                discriminator(designs_3d, conds_expanded), valid
-            )
-            
-            # Fake loss (detached reconstructions)
-            fake_loss = adversarial_loss(
-                discriminator(reconstructed.detach(), conds_expanded), fake
-            )
-            
-            # Random noise generation for additional adversarial training
-            z_random = th.randn((batch_size, args.latent_dim), device=device)
-            fake_designs = generator(z_random, conds)
-            fake_loss_random = adversarial_loss(
-                discriminator(fake_designs.detach(), conds_expanded), fake
-            )
-            
-            d_loss = (real_loss + fake_loss + fake_loss_random) / 3
-            d_loss.backward()
-            optimizer_discriminator.step()
+            if d_total_acc <= 0.8:
+                optimizer_discriminator.zero_grad()
+                
+                # Real loss
+                real_loss = adversarial_loss(
+                    discriminator(designs_3d, conds_expanded), valid
+                )
+                
+                # Fake loss (detached reconstructions)
+                fake_loss = adversarial_loss(
+                    discriminator(reconstructed.detach(), conds_expanded), fake
+                )
+                
+                # Random noise generation for additional adversarial training
+                z_random = th.randn((batch_size, args.latent_dim), device=device)
+                fake_designs = generator(z_random, conds)
+                fake_loss_random = adversarial_loss(
+                    discriminator(fake_designs.detach(), conds_expanded), fake
+                )
+                
+                d_loss = (real_loss + fake_loss + fake_loss_random) / 3
+                
+                d_loss.backward()
+                optimizer_discriminator.step()
 
             # Logging
             batches_done = epoch * len(dataloader) + i
             
             if args.track:
                 wandb.log({
-                    "vae_loss": vae_loss.item(),
+                    "E_loss": E_loss.item(),
                     "recon_loss": recon_loss.item(),
-                    "kl_loss": kl_loss.item(),
+                    "g_loss": g_loss.item(),
+                    "mvkl_loss": mvkl_loss.item(),
                     "g_loss_adv": g_loss_adv.item(),
                     "multiview_loss": multiview_loss.item(),
                     "d_loss": d_loss.item(),
@@ -579,8 +606,8 @@ if __name__ == "__main__":
                 
                 if i % 10 == 0:
                     print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
-                          f"[VAE loss: {vae_loss.item():.4f}] [D loss: {d_loss.item():.4f}] "
-                          f"[Recon: {recon_loss.item():.4f}] [KL: {kl_loss.item():.4f}]")
+                          f"[E loss: {E_loss.item():.4f}] [D loss: {d_loss.item():.4f}] "
+                          f"[Recon: {recon_loss.item():.4f}] [KL: {mvkl_loss.item():.4f}]")
 
                 if batches_done % args.sample_interval == 0:
                     print("Generating 3D design samples...")
