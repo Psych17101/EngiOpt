@@ -525,6 +525,10 @@ if __name__ == "__main__":
             
             # Add channel dimension to designs: (B, 1, D, H, W)
             designs_3d = designs_3d.unsqueeze(1)
+            
+            # Pad to (B, 1, 64, 64, 64) if needed
+            if designs_3d.shape[2:] == (51, 51, 51):
+                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
 
             batch_size = designs_3d.size(0)
 
