@@ -25,7 +25,7 @@ class Args:
     """Problem identifier."""
     seed: int = 1
     """Random seed to run."""
-    wandb_project: str = "engiopt"
+    wandb_project: str = "engiopt_3d"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
@@ -63,14 +63,15 @@ if __name__ == "__main__":
 
     # Reshape to match the expected input shape for the model
     conditions_tensor = conditions_tensor.unsqueeze(-1).unsqueeze(-1)
+    conditions_tensor = conditions_tensor.view(args.n_samples, len(problem.conditions), 1, 1, 1)
 
     ### Set Up Generator ###
 
     # Restores the pytorch model from wandb
     if args.wandb_entity is not None:
-        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_cgan_cnn_3d_generator:seed_{seed}"
+        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_cgan_cnn_3d_generator_3d:seed_{seed}"
     else:
-        artifact_path = f"{args.wandb_project}/{args.problem_id}_cgan_cnn_3d_generator:seed_{seed}"
+        artifact_path = f"{args.wandb_project}/{args.problem_id}_cgan_cnn_3d_generator_3d:seed_{seed}"
 
     api = wandb.Api()
     artifact = api.artifact(artifact_path, type="model")
@@ -86,20 +87,30 @@ if __name__ == "__main__":
 
     ckpt_path = os.path.join(artifact_dir, "generator_3d.pth")
     ckpt = th.load(ckpt_path, map_location=th.device(device))
+    # Safer debug output
+    for key in ckpt.keys():
+        print("Checkpoint key:", key)
     model = Generator3D(
         latent_dim=run.config["latent_dim"], n_conds=len(problem.conditions), design_shape=problem.design_space.shape
     )
-    model.load_state_dict(ckpt["generator_3d"])
+    model.load_state_dict(ckpt["generator"])
     model.eval()  # Set to evaluation mode
     model.to(device)
 
     # Sample noise as generator input
-    z = th.randn((args.n_samples, run.config["latent_dim"], 1, 1), device=device, dtype=th.float)
+    z = th.randn((args.n_samples, run.config["latent_dim"],1, 1, 1), device=device, dtype=th.float)
 
     # Generate a batch of designs
     gen_designs = model(z, conditions_tensor)
-    gen_designs_np = gen_designs.detach().cpu().numpy()
-    gen_designs_np = gen_designs_np.reshape(args.n_samples, *problem.design_space.shape)
+    print("gen_designs.shape:", gen_designs.shape)
+    gen_designs_np = gen_designs.squeeze(1).detach().cpu().numpy()
+    crop_start = (64 - 51) // 2  # 6
+    crop_end = crop_start + 51   # 6 + 51 = 57
+
+    gen_designs_np = gen_designs_np[:, 
+                                crop_start:crop_end, 
+                                crop_start:crop_end, 
+                                crop_start:crop_end]
 
     # Clip to boundaries for running THIS IS PROBLEM DEPENDENT
     gen_designs_np = np.clip(gen_designs_np, 1e-3, 1)
