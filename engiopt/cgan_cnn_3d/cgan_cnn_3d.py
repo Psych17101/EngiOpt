@@ -214,8 +214,8 @@ class Generator3D(nn.Module):
             nn.BatchNorm3d(num_filters[4]),
             nn.ReLU(inplace=True),
             
-            # Final layer to output channels
-            nn.ConvTranspose3d(num_filters[4], out_channels, kernel_size=4, stride=2, padding=1, bias=False),
+            # Final conv without changing spatial size
+            nn.Conv3d(num_filters[4], out_channels, kernel_size=3, stride=1, padding=1, bias=False),
             nn.Tanh(),  # Output in [-1, 1] range
         )
 
@@ -239,8 +239,8 @@ class Generator3D(nn.Module):
         out = self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
 
         # Resize to target shape if needed
-        if out.shape[2:] != self.design_shape:
-            out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
+        #if out.shape[2:] != self.design_shape:
+            #out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
 
         return out
 
