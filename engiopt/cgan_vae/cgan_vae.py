@@ -16,6 +16,7 @@ import numpy as np
 import torch as th
 from torch import nn
 import torch.nn.functional as F
+import torch.autograd as autograd
 import tqdm
 import tyro
 
@@ -25,7 +26,7 @@ import wandb
 class Args:
     """Command-line arguments for 3D Multiview VAE-GAN."""
 
-    problem_id: str = "beams3d"
+    problem_id: str = "heatconduction3d"
     """Problem identifier for 3D engineering design."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -63,7 +64,7 @@ class Args:
     """dimensionality of the latent space"""
     sample_interval: int = 800
     """interval between volume samples"""
-    
+        
     # VAE specific parameters
     kl_weight: float = 0.01
     """Weight for KL divergence loss"""
@@ -83,11 +84,20 @@ class Args:
 
 def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_names: list, 
                         save_path: str, max_designs: int = 9):
-    """Visualize 3D volumes by showing cross-sectional slices."""
+    """Visualize 3D volumes by showing cross-sectional slices with a red-white heatmap.
+    
+    Args:
+        volumes: (N, 1, D, H, W) tensor of 3D designs
+        conditions: (N, n_conds) tensor of conditions
+        condition_names: List of condition names
+        save_path: Path to save the visualization
+        max_designs: Maximum number of designs to visualize
+    """
     n_designs = min(len(volumes), max_designs)
     volumes = volumes[:n_designs]
     conditions = conditions[:n_designs]
     
+    # Create subplot grid (3 slices per design)
     rows = n_designs
     cols = 3  # XY, XZ, YZ slices
     fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
@@ -96,28 +106,31 @@ def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_na
         axes = axes.reshape(1, -1)
     
     for i in range(n_designs):
-        vol = volumes[i, 0].cpu().numpy()
+        vol = volumes[i, 0].cpu().numpy()  # Remove channel dimension
         D, H, W = vol.shape
         
+        # Use 'Reds_r' colormap: low=red, high=white
+        cmap = plt.get_cmap('Reds_r')
+        
         # XY slice (middle Z)
-        axes[i, 0].imshow(vol[D//2, :, :], cmap='viridis', vmin=-1, vmax=1)
+        axes[i, 0].imshow(vol[D//2, :, :], cmap=cmap, vmin=-1, vmax=1)
         axes[i, 0].set_title(f'Design {i+1} - XY slice (z={D//2})')
         axes[i, 0].set_xticks([])
         axes[i, 0].set_yticks([])
         
         # XZ slice (middle Y)
-        axes[i, 1].imshow(vol[:, H//2, :], cmap='viridis', vmin=-1, vmax=1)
+        axes[i, 1].imshow(vol[:, H//2, :], cmap=cmap, vmin=-1, vmax=1)
         axes[i, 1].set_title(f'Design {i+1} - XZ slice (y={H//2})')
         axes[i, 1].set_xticks([])
         axes[i, 1].set_yticks([])
         
         # YZ slice (middle X)
-        axes[i, 2].imshow(vol[:, :, W//2], cmap='viridis', vmin=-1, vmax=1)
+        axes[i, 2].imshow(vol[:, :, W//2], cmap=cmap, vmin=-1, vmax=1)
         axes[i, 2].set_title(f'Design {i+1} - YZ slice (x={W//2})')
         axes[i, 2].set_xticks([])
         axes[i, 2].set_yticks([])
         
-        # Add condition information
+        # Add condition information as text
         cond_text = []
         for j, name in enumerate(condition_names):
             cond_text.append(f"{name}: {conditions[i, j]:.2f}")
@@ -163,7 +176,7 @@ def render_multiview(volume: th.Tensor, n_views: int = 3) -> th.Tensor:
 
 
 class Encoder(nn.Module):
-    """3D Encoder for VAE - produces latent mean and log-variance."""
+    """2D Encoder for VAE - processes 2D slices and produces latent mean and log-variance."""
 
     def __init__(
         self,
@@ -175,76 +188,118 @@ class Encoder(nn.Module):
         self.latent_dim = latent_dim
 
         self.encoder = nn.Sequential(
-            # 64 → 32
+            # Assuming input is around 51x51, we need to handle this size
+            # 51 → 25 (with padding to make it work)
             nn.Conv2d(in_channels, num_filters[0], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[0]),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
 
-            # 32 → 16
+            # 25 → 12
             nn.Conv2d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[1]),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
 
-            # 16 → 8
+            # 12 → 6
             nn.Conv2d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[2]),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
 
-            # 8 → 4
+            # 6 → 3
             nn.Conv2d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[3]),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
 
-            # 4 → 2
+            # 3 → 1
             nn.Conv2d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[4]),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
         )
 
-        # Calculate flattened dimension
-        self.flatten_dim = num_filters[4] * 2 * 2 * 2
+        # Adaptive pooling to handle variable input sizes
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((2, 2))
+        
+        # Calculate flattened dimension after adaptive pooling
+        self.flatten_dim = num_filters[4] * 2 * 2
         self.fc_mu = nn.Linear(self.flatten_dim, latent_dim)
         self.fc_logvar = nn.Linear(self.flatten_dim, latent_dim)
 
     def forward(self, x: th.Tensor) -> tuple[th.Tensor, th.Tensor]:
-        """Encode input volume to latent distribution parameters."""
-        # Ensure input is correct size
-        if x.shape[2:] != (64, 64, 64):
-            x = F.interpolate(x, size=(64, 64, 64), mode='trilinear', align_corners=False)
-            
+        """Encode input 2D slices to latent distribution parameters."""
+        # x should be (B*n_slices, 1, H, W) where H, W are the slice dimensions
+        
         h = self.encoder(x)
+        # Use adaptive pooling to ensure consistent output size
+        h = self.adaptive_pool(h)
         h = h.view(h.size(0), -1)  # Flatten
+        
         mu = self.fc_mu(h)
         logvar = self.fc_logvar(h)
         return mu, logvar
+    
+def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
+    """Calculates the gradient penalty loss for WGAN GP"""
+    batch_size = real_samples.size(0)
+    # Random weight term for interpolation between real and fake samples
+    alpha = th.rand(batch_size, 1, 1, 1, 1, device=device)
+    alpha = alpha.expand_as(real_samples)
+    # Get interpolated samples
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    d_interpolates = discriminator(interpolates, conds)
+    # For multi-dimensional output, take mean
+    fake = th.ones_like(d_interpolates, device=device, requires_grad=False)
+    # Get gradient w.r.t. interpolates
+    gradients = autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=fake,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    gradients = gradients.view(batch_size, -1)
+    gradient_norm = gradients.norm(2, dim=1)
+    gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
+    return gradient_penalty
 
-# Could possible just import class from cgan_cnn_3d.py
 class Generator3D(nn.Module):
-    """3D Generator - can work as both VAE decoder and GAN generator."""
+    """3D Conditional GAN generator that outputs volumetric designs.
+
+    From noise + condition -> 3D volume (e.g., 64x64x64).
+
+    Args:
+        latent_dim (int): Dimensionality of the noise (latent) vector.
+        n_conds (int): Number of conditional features.
+        design_shape (tuple[int, int, int]): Target 3D design shape (D, H, W).
+        num_filters (list of int): Number of filters in each upsampling stage.
+        out_channels (int): Number of output channels (e.g., 1 for density).
+    """
 
     def __init__(
         self,
         latent_dim: int,
         n_conds: int,
         design_shape: tuple[int, int, int],
-        num_filters: list[int] = [512, 256, 128, 64, 32],
+        num_filters: list[int] = [512, 256, 128, 64, 32],  # Extra layer for 3D
         out_channels: int = 1,
     ):
         super().__init__()
         self.design_shape = design_shape
-        self.latent_dim = latent_dim
-        self.n_conds = n_conds
         
-        # Combined input processing
-        input_dim = latent_dim + n_conds
-        
-        # Initial projection to 4x4x4
-        self.initial_proj = nn.Sequential(
-            nn.Linear(input_dim, num_filters[0] * 4 * 4 * 4),
-            nn.ReLU(inplace=True)
+        # Path for noise z - start with 4x4x4 volume
+        self.z_path = nn.Sequential(
+            nn.ConvTranspose3d(latent_dim, num_filters[0] // 2, kernel_size=4, stride=1, padding=0, bias=False),
+            nn.BatchNorm3d(num_filters[0] // 2),
+            nn.ReLU(inplace=True),
         )
         
-        # Upsampling blocks
+        # Path for condition c - start with 4x4x4 volume
+        self.c_path = nn.Sequential(
+            nn.ConvTranspose3d(n_conds, num_filters[0] // 2, kernel_size=4, stride=1, padding=0, bias=False),
+            nn.BatchNorm3d(num_filters[0] // 2),
+            nn.ReLU(inplace=True),
+        )
+
+        # Upsampling blocks: 4x4x4 -> 8x8x8 -> 16x16x16 -> 32x32x32 -> 64x64x64
         self.up_blocks = nn.Sequential(
             # 4x4x4 -> 8x8x8
             nn.ConvTranspose3d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1, bias=False),
@@ -266,113 +321,131 @@ class Generator3D(nn.Module):
             nn.BatchNorm3d(num_filters[4]),
             nn.ReLU(inplace=True),
             
-            # Final output layer
-            nn.ConvTranspose3d(num_filters[4], out_channels, kernel_size=4, stride=2, padding=1, bias=False),
-            nn.Tanh(),
+            # Final conv without changing spatial size
+            nn.Conv3d(num_filters[4], out_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.Tanh(),  # Output in [-1, 1] range
         )
 
-    def forward(self, z: th.Tensor, c: th.Tensor = None) -> th.Tensor:
-        """Generate 3D volume from latent code and optional conditions."""
-        # Handle different input formats
-        if z.dim() == 2:  # (B, latent_dim) - from encoder
-            batch_size = z.size(0)
-            if c is not None:
-                if c.dim() > 2:
-                    c = c.view(batch_size, -1)  # Flatten conditions
-                combined = th.cat([z, c], dim=1)
-            else:
-                combined = z
-        else:  # (B, latent_dim, 1, 1, 1) - from noise
-            batch_size = z.size(0)
-            z_flat = z.view(batch_size, -1)
-            if c is not None:
-                c_flat = c.view(batch_size, -1)
-                combined = th.cat([z_flat, c_flat], dim=1)
-            else:
-                combined = z_flat
+    def forward(self, z: th.Tensor, c: th.Tensor) -> th.Tensor:
+        """Forward pass for the 3D Generator.
+
+        Inputs:
+            z: (B, z_dim, 1, 1, 1) - noise vector
+            c: (B, cond_features, 1, 1, 1) - condition vector
+        Output:
+            out: (B, out_channels, D, H, W) - 3D design
+        """
+        # Run noise & condition through separate stems
+        z = z.view(z.size(0), z.size(1), 1, 1, 1)           # (B, latent_dim, 1, 1, 1)
+        c = c.view(c.size(0), c.size(1), 1, 1, 1)  # (B, n_conds, 1, 1, 1)
+
         
-        # Project to initial volume
-        h = self.initial_proj(combined)
-        h = h.view(batch_size, -1, 4, 4, 4)
-        
-        # Upsample to final volume
-        out = self.up_blocks(h)
-        
+        z_feat = self.z_path(z)  # -> (B, num_filters[0]//2, 4, 4, 4)
+        c_feat = self.c_path(c)  # -> (B, num_filters[0]//2, 4, 4, 4)
+
+        # Concat along channel dimension
+        x = th.cat([z_feat, c_feat], dim=1)  # (B, num_filters[0], 4, 4, 4)
+
+        # Upsample through the main blocks
+        out = self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
+
         # Resize to target shape if needed
         if out.shape[2:] != self.design_shape:
             out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
-        
+
         return out
 
 
 class Discriminator3D(nn.Module):
-    """3D Discriminator for both volumes and multiview consistency."""
+    """3D Conditional GAN discriminator for volumetric designs.
+
+    Takes 3D volumes + conditions and outputs real/fake score.
+
+    Args:
+        n_conds (int): Number of conditional channels.
+        in_channels (int): Number of input volume channels.
+        num_filters (list of int): Number of filters in each downsampling stage.
+        out_channels (int): Typically 1 for real/fake score.
+    """
 
     def __init__(
         self,
         n_conds: int,
         in_channels: int = 1,
-        num_filters: list[int] = [32, 64, 128, 256, 512],
+        num_filters: list[int] = [32, 64, 128, 256, 512],  # Extra layer for 3D
         out_channels: int = 1,
     ):
         super().__init__()
-        self.n_conds = n_conds
 
-        # Volume path
+        # Path for 3D design volume
         self.vol_path = nn.Sequential(
             nn.Conv3d(in_channels, num_filters[0] // 2, kernel_size=4, stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
         )
         
-        # Condition path
+        # Path for condition (expand to match volume size)
         self.cond_path = nn.Sequential(
             nn.Conv3d(n_conds, num_filters[0] // 2, kernel_size=4, stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
         )
 
-        # Main discriminator blocks
+        # Downsampling blocks: 64x64x64 -> 32x32x32 -> 16x16x16 -> 8x8x8 -> 4x4x4 -> 1x1x1
         self.down_blocks = nn.Sequential(
+            # 32x32x32 -> 16x16x16
             nn.Conv3d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[1]),
             nn.LeakyReLU(0.2, inplace=True),
             
+            # 16x16x16 -> 8x8x8
             nn.Conv3d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[2]),
             nn.LeakyReLU(0.2, inplace=True),
             
+            # 8x8x8 -> 4x4x4
             nn.Conv3d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[3]),
             nn.LeakyReLU(0.2, inplace=True),
             
+            # 4x4x4 -> 2x2x2
             nn.Conv3d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[4]),
             nn.LeakyReLU(0.2, inplace=True),
         )
 
-        # Final classification
+        # Final classification layer
         self.final_conv = nn.Sequential(
             nn.Conv3d(num_filters[4], out_channels, kernel_size=2, stride=1, padding=0, bias=False),
-            nn.Sigmoid()
+            # nn.Sigmoid() # Removed for WGAN-GP compatibility
         )
 
     def forward(self, x: th.Tensor, c: th.Tensor) -> th.Tensor:
-        """Discriminate 3D volume with conditions."""
-        # Ensure standard size
+        """Forward pass for the 3D Discriminator.
+
+        Inputs:
+            x: (B, in_channels, D, H, W) - 3D design volume
+            c: (B, cond_features, 1, 1, 1) - condition vector
+        Output:
+            out: (B, out_channels, 1, 1, 1) - real/fake score
+        """
+        # Resize volume to standard size (64x64x64) if needed
         if x.shape[2:] != (64, 64, 64):
             x = F.interpolate(x, size=(64, 64, 64), mode='trilinear', align_corners=False)
 
-        # Expand conditions
-        c_expanded = c.expand(-1, -1, *x.shape[2:])
+        # Expand conditions to match volume spatial dimensions
+        c_expanded = c.expand(-1, -1, *x.shape[2:])  # (B, n_conds, D, H, W)
 
-        # Process through separate paths
-        x_feat = self.vol_path(x)
-        c_feat = self.cond_path(c_expanded)
+        # Process volume and conditions through separate stems
+        x_feat = self.vol_path(x)  # (B, num_filters[0]//2, 32, 32, 32)
+        c_feat = self.cond_path(c_expanded)  # (B, num_filters[0]//2, 32, 32, 32)
 
-        # Combine and discriminate
-        h = th.cat([x_feat, c_feat], dim=1)
-        h = self.down_blocks(h)
-        return self.final_conv(h)
+        # Concat along channel dimension
+        h = th.cat([x_feat, c_feat], dim=1)  # (B, num_filters[0], 32, 32, 32)
 
+        # Downsample through blocks
+        h = self.down_blocks(h)  # -> (B, num_filters[4], 2, 2, 2)
+
+        # Final classification
+        return self.final_conv(h)  # -> (B, out_channels, 1, 1, 1)
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -410,13 +483,15 @@ if __name__ == "__main__":
         device = th.device("cuda")
     else:
         device = th.device("cpu")
+    
+    # Enable anomaly detection for debugging
+    th.autograd.set_detect_anomaly(True)
 
     print(f"Using device: {device}")
     print(f"3D Design shape: {design_shape}")
     print(f"Number of conditions: {n_conds}")
 
     # Loss functions
-    adversarial_loss = th.nn.BCELoss()
     reconstruction_loss = th.nn.MSELoss()
 
     # Initialize models
@@ -432,7 +507,6 @@ if __name__ == "__main__":
     encoder.to(device)
     generator.to(device)
     discriminator.to(device)
-    adversarial_loss.to(device)
     reconstruction_loss.to(device)
 
     # Print parameters
@@ -483,11 +557,9 @@ if __name__ == "__main__":
     print("Starting 3D VAE-GAN training...")
     
     # Initialize multiview_loss tensor outside the loop
-    multiview_loss = th.tensor(0.0, device=device)
     
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
-            multiview_loss.zero_()  # Reset the tensor at the start of each iteration
             designs_3d = data[0].unsqueeze(1)  # (B, 1, D, H, W)
             condition_data = data[1:]
             conds = th.stack(condition_data, dim=1)
@@ -495,9 +567,6 @@ if __name__ == "__main__":
             
             batch_size, _, D, H, W = designs_3d.shape
             
-            valid = th.ones((batch_size, 1, 1, 1, 1), device=device)
-            fake = th.zeros((batch_size, 1, 1, 1, 1), device=device)
-
             # --- Extract a subset of XY slices from each volume ---
             n_slices = min(args.n_slices, D)  # You can set n_slices as desired
             slice_indices = th.linspace(0, D - 1, n_slices).long()
@@ -513,8 +582,8 @@ if __name__ == "__main__":
             mvkl_loss = kl_divergence(mu, logvar) / mu.size(0)  # mu.size(0) == B*D
 
             # Reshape for aggregation if needed
-            mu = mu.view(batch_size, D, -1)              # (B, D, latent_dim)
-            logvar = logvar.view(batch_size, D, -1)      # (B, D, latent_dim)
+            mu = mu.view(batch_size, n_slices, -1)              # (B, n_slices, latent_dim)
+            logvar = logvar.view(batch_size, n_slices, -1)      # (B, n_slices, latent_dim)
 
             # Average latent vectors for each volume - Mean Pooling
             mu = mu.mean(dim=1)                          # (B, latent_dim)
@@ -531,25 +600,26 @@ if __name__ == "__main__":
             # ==================
             # Train Encoder
             # ==================
-            
-            
+
             optimizer_encoder.zero_grad()
             E_loss = args.recon_weight * recon_loss + args.kl_weight * mvkl_loss
             E_loss.backward(retain_graph=True)
             optimizer_encoder.step()
 
-            
             # ==================
             # Train Generator
             # ==================
-            
+
+            # Re-compute reconstruction for generator (to avoid shared graph issues)
+            z_encoded_gen = reparameterize(mu.detach(), logvar.detach())
+            reconstructed_gen = generator(z_encoded_gen, conds)
+            recon_loss_gen = reconstruction_loss(reconstructed_gen, designs_3d)
+
             # GAN loss for generator
             optimizer_generator.zero_grad()
-            g_loss_adv = adversarial_loss(
-                discriminator(reconstructed, conds_expanded), valid
-            )
-            
-            g_loss = g_loss_adv + args.recon_weight* recon_loss
+            g_loss_adv = -discriminator(reconstructed_gen, conds_expanded).mean()
+
+            g_loss = g_loss_adv + args.recon_weight * recon_loss_gen
             g_loss.backward()
             optimizer_generator.step()
             
@@ -557,52 +627,45 @@ if __name__ == "__main__":
             # ==================
             # Train Discriminator
             # ==================
-            d_real_acc = (discriminator(designs_3d, conds_expanded) > 0.5).float().mean()
-            d_fake_acc = (discriminator(reconstructed.detach(), conds_expanded) < 0.5).float().mean()
-            d_total_acc = (d_real_acc + d_fake_acc) / 2
+            optimizer_discriminator.zero_grad()
             
-            if d_total_acc <= 0.8:
-                optimizer_discriminator.zero_grad()
+            # Wasserstein discriminator loss
+            real_validity = discriminator(designs_3d, conds_expanded)
+            fake_validity = discriminator(reconstructed_gen.detach(), conds_expanded)
+            
+            # Random noise generation
+            z_random = th.randn((batch_size, args.latent_dim), device=device)
+            fake_designs = generator(z_random, conds)
+            fake_validity_random = discriminator(fake_designs.detach(), conds_expanded)
+            
+            # Wasserstein loss
+            d_loss = -(real_validity.mean() - (fake_validity.mean() + fake_validity_random.mean()) / 2)
+            
+            gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, reconstructed_gen.detach(), conds_expanded, device)
+            d_loss += gradient_penalty
+            d_loss.backward()
+            optimizer_discriminator.step()
                 
-                # Real loss
-                real_loss = adversarial_loss(
-                    discriminator(designs_3d, conds_expanded), valid
-                )
-                
-                # Fake loss (detached reconstructions)
-                fake_loss = adversarial_loss(
-                    discriminator(reconstructed.detach(), conds_expanded), fake
-                )
-                
-                # Random noise generation for additional adversarial training
-                z_random = th.randn((batch_size, args.latent_dim), device=device)
-                fake_designs = generator(z_random, conds)
-                fake_loss_random = adversarial_loss(
-                    discriminator(fake_designs.detach(), conds_expanded), fake
-                )
-                
-                d_loss = (real_loss + fake_loss + fake_loss_random) / 3
-                
-                d_loss.backward()
-                optimizer_discriminator.step()
-
-            # Logging
+            # ----------
+            #  Logging
+            # ----------
             batches_done = epoch * len(dataloader) + i
             
             if args.track:
-                wandb.log({
+                log_dict = {
                     "E_loss": E_loss.item(),
                     "recon_loss": recon_loss.item(),
                     "g_loss": g_loss.item(),
                     "mvkl_loss": mvkl_loss.item(),
                     "g_loss_adv": g_loss_adv.item(),
-                    "multiview_loss": multiview_loss.item(),
                     "d_loss": d_loss.item(),
-                    "real_loss": real_loss.item(),
-                    "fake_loss": fake_loss.item(),
+                    "real_validity": real_validity.mean().item(),
+                    "fake_validity": fake_validity.mean().item(),
                     "epoch": epoch,
                     "batch": batches_done,
-                })
+                }
+                        
+                wandb.log(log_dict)
                 
                 if i % 10 == 0:
                     print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
