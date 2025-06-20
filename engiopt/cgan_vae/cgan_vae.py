@@ -561,6 +561,10 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             designs_3d = data[0].unsqueeze(1)  # (B, 1, D, H, W)
+            # Pad to (B, 1, 64, 64, 64) if needed
+            if designs_3d.shape[2:] == (51, 51, 51):
+                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+                
             condition_data = data[1:]
             conds = th.stack(condition_data, dim=1)
             conds_expanded = conds.reshape(-1, n_conds, 1, 1, 1)
