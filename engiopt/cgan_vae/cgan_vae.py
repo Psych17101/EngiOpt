@@ -598,6 +598,9 @@ if __name__ == "__main__":
             # Reconstruct
             reconstructed = generator(z_encoded, conds)
             
+            if reconstructed.shape[2:] == (51, 51, 51):
+                reconstructed = F.pad(reconstructed, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+            
             # VAE losses
             recon_loss = reconstruction_loss(reconstructed, designs_3d)
             
@@ -617,6 +620,8 @@ if __name__ == "__main__":
             # Re-compute reconstruction for generator (to avoid shared graph issues)
             z_encoded_gen = reparameterize(mu.detach(), logvar.detach())
             reconstructed_gen = generator(z_encoded_gen, conds)
+            if reconstructed_gen.shape[2:] == (51, 51, 51):
+                reconstructed_gen = F.pad(reconstructed_gen, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
             recon_loss_gen = reconstruction_loss(reconstructed_gen, designs_3d)
 
             # GAN loss for generator
@@ -640,6 +645,8 @@ if __name__ == "__main__":
             # Random noise generation
             z_random = th.randn((batch_size, args.latent_dim), device=device)
             fake_designs = generator(z_random, conds)
+            if fake_designs.shape[2:] == (51, 51, 51):
+                fake_designs = F.pad(fake_designs, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
             fake_validity_random = discriminator(fake_designs.detach(), conds_expanded)
             
             # Wasserstein loss

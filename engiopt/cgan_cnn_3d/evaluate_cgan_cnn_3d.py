@@ -19,9 +19,9 @@ import wandb
 
 @dataclasses.dataclass
 class Args:
-    """Command-line arguments for a single-seed cGAN CNN 2D evaluation."""
+    """Command-line arguments for a single-seed cGAN CNN 3D evaluation."""
 
-    problem_id: str = "beams2d"
+    problem_id: str = "heatconduction3d"
     """Problem identifier."""
     seed: int = 1
     """Random seed to run."""

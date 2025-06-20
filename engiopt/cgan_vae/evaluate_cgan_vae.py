@@ -19,13 +19,13 @@ import wandb
 
 @dataclasses.dataclass
 class Args:
-    """Command-line arguments for a single-seed cGAN CNN 2D evaluation."""
+    """Command-line arguments for a single-seed Multiview VAE cGAN 3D evaluation."""
 
     problem_id: str = "heatconduction3d"
     """Problem identifier."""
     seed: int = 1
     """Random seed to run."""
-    wandb_project: str = "engiopt_3d_vae"
+    wandb_project: str = "engiopt_3d_vaegan"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
@@ -85,7 +85,7 @@ if __name__ == "__main__":
         raise RunRetrievalError
     artifact_dir = artifact.download()
 
-    ckpt_path = os.path.join(artifact_dir, "generator_3d.pth")
+    ckpt_path = os.path.join(artifact_dir, "multiview_3d_vaegan.pth")
     ckpt = th.load(ckpt_path, map_location=th.device(device))
     # Safer debug output
     for key in ckpt.keys():
