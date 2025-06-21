@@ -69,9 +69,9 @@ if __name__ == "__main__":
 
     # Restores the pytorch model from wandb
     if args.wandb_entity is not None:
-        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_cgan_vae_generator_3d:seed_{seed}"
+        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_cgan_vae_models:seed_{seed}"
     else:
-        artifact_path = f"{args.wandb_project}/{args.problem_id}_cgan_vae_generator_3d:seed_{seed}"
+        artifact_path = f"{args.wandb_project}/{args.problem_id}_cgan_vae_models:seed_{seed}"
 
     api = wandb.Api()
     artifact = api.artifact(artifact_path, type="model")
