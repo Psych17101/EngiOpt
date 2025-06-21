@@ -1,4 +1,4 @@
-"""Evaluation for the CGAN 3D w/ CNN."""
+"""Evaluation for the Slice GAN 3D."""
 
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ import wandb
 class Args:
     """Command-line arguments for a single-seed cGAN CNN 2D evaluation."""
 
-    problem_id: str = "beams2d"
+    problem_id: str = "heatconduction3D"
     """Problem identifier."""
     seed: int = 1
     """Random seed to run."""
-    wandb_project: str = "engiopt_3d"
+    wandb_project: str = "engiopt_slicegan"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
