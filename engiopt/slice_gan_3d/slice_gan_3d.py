@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 from torch import nn
+from torch import autograd
 import torch.nn.functional as F
 import tqdm
 import tyro
@@ -361,57 +362,39 @@ class SliceDiscriminator2D(nn.Module):
         # Final classification
         return self.final_conv(h)  # (B, out_channels, 1, 1)
 
-
-def compute_consistency_loss(volumes: th.Tensor, slice_generators: dict, design_conds: th.Tensor, 
-                           latent_vectors: th.Tensor, device: th.device) -> th.Tensor:
-    """Compute consistency loss between slices extracted from volumes and generated slices."""
-    consistency_loss = 0.0
-    n_comparisons = 0
+def compute_gradient_penalty(discriminator, real_samples, fake_samples, 
+                           real_conds_axis, real_pos_axis, batch_size, device, lambda_gp=10.0):
+    """Calculates the gradient penalty loss for WGAN GP"""
+    # Random weight term for interpolation between real and fake samples
+    alpha = th.rand(batch_size, 1, 1, 1, device=device)
+    alpha = alpha.expand_as(real_samples)
+    # Get interpolated samples
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
     
-    batch_size = volumes.shape[0]
-    design_conds_2d = design_conds.unsqueeze(-1).unsqueeze(-1)  # (B, n_design_conds, 1, 1)
-    z_2d = latent_vectors.unsqueeze(-1).unsqueeze(-1)  # (B, latent_dim, 1, 1)
+    # Interpolate conditions too
+    alpha_cond = th.rand(batch_size, 1, 1, 1, device=device)
+    alpha_cond = alpha_cond.expand_as(real_conds_axis)
+    interpolated_conds = alpha_cond * real_conds_axis + (1 - alpha_cond) * real_conds_axis
     
-    # Sample a few slice positions for consistency check
-    n_test_slices = 3
+    alpha_pos = th.rand(batch_size, 1, 1, 1, device=device) 
+    alpha_pos = alpha_pos.expand_as(real_pos_axis)
+    interpolated_pos = alpha_pos * real_pos_axis + (1 - alpha_pos) * real_pos_axis
     
-    for axis_name, generator in slice_generators.items():
-        if axis_name == 'xy':  # XY slices
-            axis_idx = 0
-            max_pos = volumes.shape[2]  # D dimension
-        elif axis_name == 'xz':  # XZ slices  
-            axis_idx = 1
-            max_pos = volumes.shape[3]  # H dimension
-        elif axis_name == 'yz':  # YZ slices
-            axis_idx = 2
-            max_pos = volumes.shape[4]  # W dimension
-        else:
-            continue
-            
-        # Sample random slice positions
-        slice_indices = th.randint(0, max_pos, (n_test_slices,), device=device)
-        
-        for slice_idx in slice_indices:
-            # Extract slice from volume
-            slice_pos_norm = slice_idx.float() / (max_pos - 1)
-            slice_pos_tensor = slice_pos_norm.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0).expand(batch_size, 1, 1, 1)
-            
-            if axis_name == 'xy':
-                real_slice = volumes[:, :, slice_idx, :, :]  # (B, 1, H, W)
-            elif axis_name == 'xz':
-                real_slice = volumes[:, :, :, slice_idx, :]  # (B, 1, D, W)
-            elif axis_name == 'yz':
-                real_slice = volumes[:, :, :, :, slice_idx]  # (B, 1, D, H)
-            
-            # Generate corresponding slice
-            generated_slice = generator(z_2d, design_conds_2d, slice_pos_tensor)
-            
-            # Compute L1 loss between real and generated slices
-            consistency_loss += F.l1_loss(generated_slice, real_slice)
-            n_comparisons += 1
+    d_interpolates = discriminator(interpolates, interpolated_conds, interpolated_pos)
     
-    return consistency_loss / max(n_comparisons, 1)
-
+    # Get gradient w.r.t. interpolates
+    gradients = autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=th.ones_like(d_interpolates, device=device),
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    
+    gradients = gradients.view(batch_size, -1)
+    gradient_penalty = lambda_gp * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -464,7 +447,7 @@ if __name__ == "__main__":
     
     slice_generator = SliceGenerator3D(
             latent_dim=args.latent_dim,
-            n_design_conds=n_conds,
+            n_conds=n_conds,
             design_shape=design_shape
         )
    
@@ -534,8 +517,6 @@ if __name__ == "__main__":
         slice_generator.train()
         return gen_volumes, desired_conds
 
-    
-    
     # ------ Training Loop ------
     print("Starting SliceGAN training...")
 
@@ -602,7 +583,7 @@ if __name__ == "__main__":
             conds_3d = conds.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (B, n_conds, 1, 1, 1)
             fake_volumes = slice_generator(z, conds_3d)
             
-            errG = 0
+            g_loss = 0
             # For each axis discriminator
             for axis_name, discriminator in slice_discriminators.items():
                 # Extract slices from generated volume and feed to discriminator
@@ -621,14 +602,18 @@ if __name__ == "__main__":
                 
                 # Generator wants discriminator to think fake slices are real (maximize score)
                 output = discriminator(fake_slices, slice_conds, slice_positions)
-                errG -= output.mean()  # Negative because we want to maximize
+                g_loss -= output.mean()  # Negative because we want to maximize
             
-            errG.backward()
+            g_loss.backward()
             optimizer_generator.step()
         
             # ---------------------
             #  Train Discriminators (adaptive)
             # ---------------------
+            d_losses = {}
+            real_losses = {}
+            fake_losses = {}
+            
             # For each axis discriminator
             for axis_name, discriminator in slice_discriminators.items():
                 optimizer_discriminators[axis_name].zero_grad()
@@ -654,74 +639,84 @@ if __name__ == "__main__":
                 out_fake = discriminator(fake_slices_axis, real_conds_axis, real_pos_axis).mean()
                 
                 # Gradient penalty
-                gradient_penalty = calculate_gradient_penalty(discriminator, real_slices_axis, fake_slices_axis, 
+                gradient_penalty = compute_gradient_penalty(discriminator, real_slices_axis, fake_slices_axis, 
                                                     real_conds_axis, real_pos_axis, batch_size, device)
                 
                 # Wasserstein loss with GP
-                disc_cost = out_fake - out_real + gradient_penalty
-                disc_cost.backward()
+                d_loss = out_fake - out_real + gradient_penalty
+                d_loss.backward()
                 optimizer_discriminators[axis_name].step()
+                
+                d_losses[axis_name] = d_loss.item()
+                real_losses[axis_name] = out_real.item()
+                fake_losses[axis_name] = out_fake.item()
+                
+                with th.no_grad():
+                    real_acc = (out_real > 0).float().mean()
+                    fake_acc = (out_fake < 0).float().mean()
+                    last_disc_acc[axis_name] = (real_acc + fake_acc) / 2
                     
-                        # ----------
-                        #  Logging
-                        # ----------
-                        batches_done = epoch * len(dataloader) + i
+                
+                    
+                # ----------
+                #  Logging
+                # ----------
+                batches_done = epoch * len(dataloader) + i
+                
+                if args.track:
+                    # Log individual axis losses
+                    log_dict = {}
+                    for axis_name in slice_discriminators.keys():
+                        log_dict[f"d_loss_{axis_name}"] = d_losses[axis_name]
+                        log_dict[f"real_loss_{axis_name}"] = real_losses[axis_name]
+                        log_dict[f"fake_loss_{axis_name}"] = fake_losses[axis_name]
+                        log_dict[f"disc_acc_{axis_name}"] = last_disc_acc[axis_name]
+                    
+                    # Log averages
+                    log_dict["d_loss_avg"] = sum(d_losses.values()) / len(d_losses)
+                    log_dict["g_loss"] = g_loss.item()
+                    log_dict["disc_acc_avg"] = sum(last_disc_acc.values()) / len(last_disc_acc)
+                    log_dict["epoch"] = epoch
+                    log_dict["batch"] = batches_done
+                    
+                    wandb.log(log_dict)
+                    
+                    if i % 10 == 0:  # Print less frequently
+                        avg_d_loss = sum(d_losses.values()) / len(d_losses)
+                        avg_disc_acc = sum(last_disc_acc.values()) / len(last_disc_acc)
                         
-                        if args.track:
-                            # Log individual axis losses
-                            log_dict = {}
-                            for axis_name in slice_discriminators.keys():
-                                log_dict[f"d_loss_{axis_name}"] = disc_losses[axis_name]
-
-                                log_dict[f"real_loss_{axis_name}"] = real_losses[axis_name]
-                                log_dict[f"fake_loss_{axis_name}"] = fake_losses[axis_name]
-                                log_dict[f"disc_acc_{axis_name}"] = last_disc_acc[axis_name]
-                            
-                            # Log averages
-                            log_dict["d_loss_avg"] = sum(disc_losses.values()) / len(disc_losses)
-                            log_dict[f"g_loss_"] = g_loss
-                            log_dict["disc_acc_avg"] = sum(last_disc_acc.values()) / len(last_disc_acc)
-                            log_dict["epoch"] = epoch
-                            log_dict["batch"] = batches_done
-                            
-                            wandb.log(log_dict)
-                            
-                            if i % 10 == 0:  # Print less frequently
-                                avg_d_loss = sum(disc_losses.values()) / len(disc_losses)
-                                avg_disc_acc = sum(last_disc_acc.values()) / len(last_disc_acc)
-                                
-                                print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
-                                    f"[D loss: {avg_d_loss:.4f}] [G loss: {avg_g_loss:.4f}] "
-                                    f"[D acc: {avg_disc_acc:.3f}]")
-                                
-                                # Print per-axis details
-                                for axis_name in slice_discriminators.keys():
-                                    print(f"  {axis_name.upper()}: D_loss={disc_losses[axis_name]:.4f}, "
-                                            f"D_acc={last_disc_acc[axis_name]:.3f}")
-                            
-                            # Sample and visualize 3D designs
-                            if batches_done % args.sample_interval == 0:
-                                print("Generating 3D design samples...")
-                                
-                                gen_volumes, gen_conds = sample_3d_designs(9)
-                                
-                                img_fname = f"images_slicegan/{batches_done}.png"
-                                visualize_3d_designs(
-                                    gen_volumes, gen_conds, condition_names,
-                                    img_fname, max_designs=9
-                                )
-                                
-                                # Log to wandb
-                                wandb.log({
-                                    "generated_designs": wandb.Image(img_fname),
-                                    "sample_step": batches_done
-                                })
-                                
-                                print(f"3D design samples saved for step {batches_done}")
+                        print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
+                            f"[D loss: {avg_d_loss:.4f}] [G loss: {g_loss:.4f}] "
+                            f"[D acc: {avg_disc_acc:.3f}]")
                         
-                        # Clean up GPU memory periodically
-                        if i % 50 == 0:
-                            th.cuda.empty_cache() if device.type == 'cuda' else None
+                        # Print per-axis details
+                        for axis_name in slice_discriminators.keys():
+                            print(f"  {axis_name.upper()}: D_loss={d_losses[axis_name]:.4f}, "
+                                    f"D_acc={last_disc_acc[axis_name]:.3f}")
+                    
+                    # Sample and visualize 3D designs
+                    if batches_done % args.sample_interval == 0:
+                        print("Generating 3D design samples...")
+                        
+                        gen_volumes, gen_conds = sample_3d_designs(9)
+                        
+                        img_fname = f"images_slicegan/{batches_done}.png"
+                        visualize_3d_designs(
+                            gen_volumes, gen_conds, condition_names,
+                            img_fname, max_designs=9
+                        )
+                        
+                        # Log to wandb
+                        wandb.log({
+                            "generated_designs": wandb.Image(img_fname),
+                            "sample_step": batches_done
+                        })
+                        
+                        print(f"3D design samples saved for step {batches_done}")
+                
+                # Clean up GPU memory periodically
+                if i % 50 == 0:
+                    th.cuda.empty_cache() if device.type == 'cuda' else None
             
         # --------------
         #  Save models
@@ -734,15 +729,14 @@ if __name__ == "__main__":
                 ckpt_gen = {
                     "epoch": epoch,
                     "batches_done": epoch * len(dataloader) + len(dataloader) - 1,
-                    "generator": generator.state_dict(),
-                    "optimizer_generator": optimizer_generator[axis_name].state_dict(),
+                    "generator": slice_generator.state_dict(),
+                    "optimizer_generator": optimizer_generator.state_dict(),
                     "loss": g_loss,
-                    "axis": axis_name,
                     "n_conds": n_conds,
                     "args": vars(args)
                 }
                 
-                gen_filename = f"generator_slice_{axis_name}.pth"
+                gen_filename = "generator_slicegan.pth"
                 th.save(ckpt_gen, gen_filename)
                 
                 if args.track:
@@ -757,7 +751,7 @@ if __name__ == "__main__":
                     "batches_done": epoch * len(dataloader) + len(dataloader) - 1,
                     "discriminator": discriminator.state_dict(),
                     "optimizer_discriminator": optimizer_discriminators[axis_name].state_dict(),
-                    "loss": disc_losses[axis_name],
+                    "loss": d_losses[axis_name],
                     "axis": axis_name,
                     "n_conds": n_conds,
                     "args": vars(args)
