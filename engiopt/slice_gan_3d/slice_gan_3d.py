@@ -366,17 +366,17 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples,
                            real_conds_axis, real_pos_axis, batch_size, device, lambda_gp=10.0):
     """Calculates the gradient penalty loss for WGAN GP"""
     # Random weight term for interpolation between real and fake samples
-    alpha = th.rand(batch_size, 1, 1, 1, device=device)
+    alpha = th.rand(real_samples.size(0), 1, 1, 1, device=device)
     alpha = alpha.expand_as(real_samples)
     # Get interpolated samples
     interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
     
     # Interpolate conditions too
-    alpha_cond = th.rand(batch_size, 1, 1, 1, device=device)
+    alpha_cond = th.rand(real_conds_axis.size(0), 1, 1, 1, device=device)
     alpha_cond = alpha_cond.expand_as(real_conds_axis)
     interpolated_conds = alpha_cond * real_conds_axis + (1 - alpha_cond) * real_conds_axis
     
-    alpha_pos = th.rand(batch_size, 1, 1, 1, device=device) 
+    alpha_pos = th.rand(real_conds_axis.size(0), 1, 1, 1, device=device) 
     alpha_pos = alpha_pos.expand_as(real_pos_axis)
     interpolated_pos = alpha_pos * real_pos_axis + (1 - alpha_pos) * real_pos_axis
     
@@ -392,7 +392,7 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples,
         only_inputs=True
     )[0]
     
-    gradients = gradients.view(batch_size, -1)
+    gradients = gradients.view(real_samples.size(0), -1)
     gradient_penalty = lambda_gp * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
     return gradient_penalty
 
@@ -513,7 +513,10 @@ if __name__ == "__main__":
         total_samples = desired_conds.shape[0]
         z = th.randn((total_samples, args.latent_dim), device=device, dtype=th.float)
 
-        gen_volumes = slice_generator.generate_volume(z, desired_conds)
+        z_3d = z.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (total_samples, latent_dim, 1, 1, 1)
+        desired_conds_3d = desired_conds.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (total_samples, n_conds, 1, 1, 1)
+
+        gen_volumes = slice_generator(z_3d, desired_conds_3d)  # (total_samples, out_channels, D, H, W)
         slice_generator.train()
         return gen_volumes, desired_conds
 
@@ -528,8 +531,20 @@ if __name__ == "__main__":
             designs_3d = batch[0]  # (B, D, H, W)
             condition_data = batch[1:]  # List of condition tensors
             
-            # Stack conditions
-            conds = th.stack(condition_data, dim=1)  # (B, n_conds)
+            # Convert condition data to float tensors and stack
+            condition_tensors_batch = []
+            for cond_tensor in condition_data:
+                if not isinstance(cond_tensor, th.Tensor):
+                    # Convert to float tensor if it's object type or not a tensor
+                    if hasattr(cond_tensor, '__iter__') and not isinstance(cond_tensor, str):
+                        cond_tensor = th.tensor([float(x) for x in cond_tensor], device=device)
+                    else:
+                        cond_tensor = th.tensor(float(cond_tensor), device=device)
+                else:
+                    cond_tensor = cond_tensor.float()
+                condition_tensors_batch.append(cond_tensor)
+            
+            conds = th.stack(condition_tensors_batch, dim=1)  # (B, n_conds)
             
             # Move to device and add channel dimension to designs
             designs_3d = designs_3d.to(device).unsqueeze(1)  # (B, 1, D, H, W)
@@ -550,29 +565,26 @@ if __name__ == "__main__":
             real_slices = {}
             slice_positions = {}
             slice_conds = {}
-            
+
             if 'xy' in slice_discriminators:
                 xy_slices, xy_positions = extract_random_slices(designs_3d, axis=0, n_slices=n_slices_xy)
                 real_slices['xy'] = xy_slices
                 slice_positions['xy'] = xy_positions
                 # Expand conditions to match number of slices
                 slice_conds['xy'] = conds.repeat_interleave(n_slices_xy, dim=0)
-            
+
             if 'xz' in slice_discriminators:
                 xz_slices, xz_positions = extract_random_slices(designs_3d, axis=1, n_slices=n_slices_xz)
                 real_slices['xz'] = xz_slices
                 slice_positions['xz'] = xz_positions
                 slice_conds['xz'] = conds.repeat_interleave(n_slices_xz, dim=0)
-            
+
             if 'yz' in slice_discriminators:
                 yz_slices, yz_positions = extract_random_slices(designs_3d, axis=2, n_slices=n_slices_yz)
                 real_slices['yz'] = yz_slices
                 slice_positions['yz'] = yz_positions
                 slice_conds['yz'] = conds.repeat_interleave(n_slices_yz, dim=0)
-            
-            # -----------------
-            #  Train Generators (with 2x batch size)
-            # -----------------
+           
             # -----------------
             #  Train Generator (every critic_iters steps)
             # -----------------
@@ -583,25 +595,32 @@ if __name__ == "__main__":
             conds_3d = conds.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (B, n_conds, 1, 1, 1)
             fake_volumes = slice_generator(z, conds_3d)
             
+            # Pad to (B, 1, 64, 64, 64) if needed
+            if fake_volumes.shape[2:] == (51, 51, 51):
+                fake_volumes = F.pad(fake_volumes, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+            
+            # Update dimensions after padding
+            _, _, D_padded, H_padded, W_padded = fake_volumes.shape
+            
             g_loss = 0
             # For each axis discriminator
             for axis_name, discriminator in slice_discriminators.items():
                 # Extract slices from generated volume and feed to discriminator
                 if axis_name == 'xy':
                     # Permute and reshape: (B, 1, D, H, W) -> (B*D, 1, H, W)
-                    fake_slices = fake_volumes.permute(0, 2, 1, 3, 4).reshape(-1, 1, H, W)
+                    fake_slices = fake_volumes.permute(0, 2, 1, 3, 4).reshape(-1, 1, H_padded, W_padded)
                 elif axis_name == 'xz':
-                    fake_slices = fake_volumes.permute(0, 3, 1, 2, 4).reshape(-1, 1, D, W)
+                    fake_slices = fake_volumes.permute(0, 3, 1, 2, 4).reshape(-1, 1, D_padded, W_padded)
                 elif axis_name == 'yz':
-                    fake_slices = fake_volumes.permute(0, 4, 1, 2, 3).reshape(-1, 1, D, H)
+                    fake_slices = fake_volumes.permute(0, 4, 1, 2, 3).reshape(-1, 1, D_padded, H_padded)
                 
                 # Create corresponding conditions and positions for slices
                 n_slices_per_vol = fake_slices.shape[0] // batch_size
-                slice_conds = conds.repeat_interleave(n_slices_per_vol, dim=0).unsqueeze(-1).unsqueeze(-1)
-                slice_positions = th.linspace(0, 1, n_slices_per_vol, device=device).repeat(batch_size).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                slice_conds_gen = conds.repeat_interleave(n_slices_per_vol, dim=0).unsqueeze(-1).unsqueeze(-1)
+                slice_positions_gen = th.linspace(0, 1, n_slices_per_vol, device=device).repeat(batch_size).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
                 
                 # Generator wants discriminator to think fake slices are real (maximize score)
-                output = discriminator(fake_slices, slice_conds, slice_positions)
+                output = discriminator(fake_slices, slice_conds_gen, slice_positions_gen)
                 g_loss -= output.mean()  # Negative because we want to maximize
             
             g_loss.backward()
@@ -628,11 +647,11 @@ if __name__ == "__main__":
                 # Train on fake slices (from the generated volume)
                 with th.no_grad():
                     if axis_name == 'xy':
-                        fake_slices_axis = fake_volumes.permute(0, 2, 1, 3, 4).reshape(-1, 1, H, W)
+                        fake_slices_axis = fake_volumes.permute(0, 2, 1, 3, 4).reshape(-1, 1, H_padded, W_padded)
                     elif axis_name == 'xz':
-                        fake_slices_axis = fake_volumes.permute(0, 3, 1, 2, 4).reshape(-1, 1, D, W)
+                        fake_slices_axis = fake_volumes.permute(0, 3, 1, 2, 4).reshape(-1, 1, D_padded, W_padded)
                     elif axis_name == 'yz':
-                        fake_slices_axis = fake_volumes.permute(0, 4, 1, 2, 3).reshape(-1, 1, D, H)
+                        fake_slices_axis = fake_volumes.permute(0, 4, 1, 2, 3).reshape(-1, 1, D_padded, H_padded)
                 
                 # Match batch size
                 fake_slices_axis = fake_slices_axis[:real_slices_axis.shape[0]]
@@ -658,66 +677,66 @@ if __name__ == "__main__":
                     
                 
                     
-                # ----------
-                #  Logging
-                # ----------
-                batches_done = epoch * len(dataloader) + i
-                
-                if args.track:
-                    # Log individual axis losses
-                    log_dict = {}
-                    for axis_name in slice_discriminators.keys():
-                        log_dict[f"d_loss_{axis_name}"] = d_losses[axis_name]
-                        log_dict[f"real_loss_{axis_name}"] = real_losses[axis_name]
-                        log_dict[f"fake_loss_{axis_name}"] = fake_losses[axis_name]
-                        log_dict[f"disc_acc_{axis_name}"] = last_disc_acc[axis_name]
-                    
-                    # Log averages
-                    log_dict["d_loss_avg"] = sum(d_losses.values()) / len(d_losses)
-                    log_dict["g_loss"] = g_loss.item()
-                    log_dict["disc_acc_avg"] = sum(last_disc_acc.values()) / len(last_disc_acc)
-                    log_dict["epoch"] = epoch
-                    log_dict["batch"] = batches_done
-                    
-                    wandb.log(log_dict)
-                    
-                    if i % 10 == 0:  # Print less frequently
-                        avg_d_loss = sum(d_losses.values()) / len(d_losses)
-                        avg_disc_acc = sum(last_disc_acc.values()) / len(last_disc_acc)
-                        
-                        print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
-                            f"[D loss: {avg_d_loss:.4f}] [G loss: {g_loss:.4f}] "
-                            f"[D acc: {avg_disc_acc:.3f}]")
-                        
-                        # Print per-axis details
-                        for axis_name in slice_discriminators.keys():
-                            print(f"  {axis_name.upper()}: D_loss={d_losses[axis_name]:.4f}, "
-                                    f"D_acc={last_disc_acc[axis_name]:.3f}")
-                    
-                    # Sample and visualize 3D designs
-                    if batches_done % args.sample_interval == 0:
-                        print("Generating 3D design samples...")
-                        
-                        gen_volumes, gen_conds = sample_3d_designs(9)
-                        
-                        img_fname = f"images_slicegan/{batches_done}.png"
-                        visualize_3d_designs(
-                            gen_volumes, gen_conds, condition_names,
-                            img_fname, max_designs=9
-                        )
-                        
-                        # Log to wandb
-                        wandb.log({
-                            "generated_designs": wandb.Image(img_fname),
-                            "sample_step": batches_done
-                        })
-                        
-                        print(f"3D design samples saved for step {batches_done}")
-                
-                # Clean up GPU memory periodically
-                if i % 50 == 0:
-                    th.cuda.empty_cache() if device.type == 'cuda' else None
+            # ----------
+            #  Logging
+            # ----------
+            batches_done = epoch * len(dataloader) + i
             
+            if args.track:
+                # Log individual axis losses
+                log_dict = {}
+                for axis_name in slice_discriminators.keys():
+                    log_dict[f"d_loss_{axis_name}"] = d_losses[axis_name]
+                    log_dict[f"real_loss_{axis_name}"] = real_losses[axis_name]
+                    log_dict[f"fake_loss_{axis_name}"] = fake_losses[axis_name]
+                    log_dict[f"disc_acc_{axis_name}"] = last_disc_acc[axis_name]
+                
+                # Log averages
+                log_dict["d_loss_avg"] = sum(d_losses.values()) / len(d_losses)
+                log_dict["g_loss"] = g_loss.item()
+                log_dict["disc_acc_avg"] = sum(last_disc_acc.values()) / len(last_disc_acc)
+                log_dict["epoch"] = epoch
+                log_dict["batch"] = batches_done
+                
+                wandb.log(log_dict)
+                
+                if i % 10 == 0:  # Print less frequently
+                    avg_d_loss = sum(d_losses.values()) / len(d_losses)
+                    avg_disc_acc = sum(last_disc_acc.values()) / len(last_disc_acc)
+                    
+                    print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
+                        f"[D loss: {avg_d_loss:.4f}] [G loss: {g_loss:.4f}] "
+                        f"[D acc: {avg_disc_acc:.3f}]")
+                    
+                    # Print per-axis details
+                    for axis_name in slice_discriminators.keys():
+                        print(f"  {axis_name.upper()}: D_loss={d_losses[axis_name]:.4f}, "
+                                f"D_acc={last_disc_acc[axis_name]:.3f}")
+                
+                # Sample and visualize 3D designs
+                if batches_done % args.sample_interval == 0:
+                    print("Generating 3D design samples...")
+                    
+                    gen_volumes, gen_conds = sample_3d_designs(9)
+                    
+                    img_fname = f"images_slicegan/{batches_done}.png"
+                    visualize_3d_designs(
+                        gen_volumes, gen_conds, condition_names,
+                        img_fname, max_designs=9
+                    )
+                    
+                    # Log to wandb
+                    wandb.log({
+                        "generated_designs": wandb.Image(img_fname),
+                        "sample_step": batches_done
+                    })
+                    
+                    print(f"3D design samples saved for step {batches_done}")
+            
+            # Clean up GPU memory periodically
+            if i % 50 == 0:
+                th.cuda.empty_cache() if device.type == 'cuda' else None
+        
         # --------------
         #  Save models
         # --------------
