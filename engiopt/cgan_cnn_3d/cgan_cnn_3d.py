@@ -239,8 +239,8 @@ class Generator3D(nn.Module):
         out = self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
 
         # Resize to target shape if needed
-        if out.shape[2:] != self.design_shape:
-            out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
+        #if out.shape[2:] != self.design_shape:
+        #    out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
 
         return out
 
