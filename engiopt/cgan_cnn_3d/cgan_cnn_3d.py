@@ -240,7 +240,7 @@ class Generator3D(nn.Module):
 
         # Resize to target shape if needed
         #if out.shape[2:] != self.design_shape:
-        #    out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
+        #    out = .interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
 
         return out
 
