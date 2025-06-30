@@ -730,3 +730,24 @@ if __name__ == "__main__":
         wandb.finish()
     
     print("Multiview 3D VAE-GAN training completed!")
+    
+    # ---- Export final generated 3D designs for ParaView ----
+    print("Exporting final generated 3D designs for ParaView...")
+    generator.eval()
+    n_export = 8  # Number of designs to export
+    z = th.randn((n_export, args.latent_dim, 1, 1, 1), device=device)
+    all_conditions = th.stack(condition_tensors, dim=1)
+    linspaces = [
+        th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_export, device=device)
+        for i in range(all_conditions.shape[1])
+    ]
+    export_conds = th.stack(linspaces, dim=1)
+    gen_volumes = generator(z, export_conds.reshape(-1, n_conds, 1, 1, 1))
+    gen_volumes_np = gen_volumes.squeeze(1).detach().cpu().numpy()
+
+    os.makedirs("paraview_exports", exist_ok=True)
+    for i, vol in enumerate(gen_volumes_np):
+        np.save(f"paraview_exports/gen3d_{i}.npy", vol)
+        # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
+
+    print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
