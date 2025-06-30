@@ -747,7 +747,7 @@ if __name__ == "__main__":
 
     os.makedirs("paraview_exports", exist_ok=True)
     for i, vol in enumerate(gen_volumes_np):
-        np.save(f"paraview_exports/gen3d_{i}.npy", vol)
+        np.save(f"paraview_exports/vae_gen3d_{i}.npy", vol)
         # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
 
     print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
