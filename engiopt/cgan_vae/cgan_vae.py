@@ -76,10 +76,6 @@ class Args:
     """Number of views for multiview rendering"""
     n_slices: int = 9
     """Number of slices to extract from each volume for training"""
-    use_multiview: bool = True
-    """Enable multiview consistency loss"""
-    multiview_weight: float = 0.1
-    """Weight for multiview consistency loss"""
 
 
 def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_names: list, 
@@ -154,27 +150,6 @@ def kl_divergence(mu: th.Tensor, logvar: th.Tensor, ) -> th.Tensor:
     """Calculate KL divergence for VAE."""
     return -0.5 * th.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-
-def render_multiview(volume: th.Tensor, n_views: int = 3) -> th.Tensor:
-    """Render multiple 2D views from 3D volume by projection."""
-    B, C, D, H, W = volume.shape
-    views = []
-    
-    # XY projection (sum along Z)
-    xy_view = th.sum(volume, dim=2)  # (B, C, H, W)
-    views.append(xy_view)
-    
-    # XZ projection (sum along Y)
-    xz_view = th.sum(volume, dim=3)  # (B, C, D, W)
-    views.append(xz_view)
-    
-    # YZ projection (sum along X)
-    yz_view = th.sum(volume, dim=4)  # (B, C, D, H)
-    views.append(yz_view)
-    
-    return views[:n_views]
-
-
 class Encoder(nn.Module):
     """2D Encoder for VAE - processes 2D slices and produces latent mean and log-variance."""
 
@@ -235,31 +210,6 @@ class Encoder(nn.Module):
         mu = self.fc_mu(h)
         logvar = self.fc_logvar(h)
         return mu, logvar
-    
-def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
-    """Calculates the gradient penalty loss for WGAN GP"""
-    batch_size = real_samples.size(0)
-    # Random weight term for interpolation between real and fake samples
-    alpha = th.rand(batch_size, 1, 1, 1, 1, device=device)
-    alpha = alpha.expand_as(real_samples)
-    # Get interpolated samples
-    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
-    d_interpolates = discriminator(interpolates, conds)
-    # For multi-dimensional output, take mean
-    fake = th.ones_like(d_interpolates, device=device, requires_grad=False)
-    # Get gradient w.r.t. interpolates
-    gradients = autograd.grad(
-        outputs=d_interpolates,
-        inputs=interpolates,
-        grad_outputs=fake,
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True
-    )[0]
-    gradients = gradients.view(batch_size, -1)
-    gradient_norm = gradients.norm(2, dim=1)
-    gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
-    return gradient_penalty
 
 class Generator3D(nn.Module):
     """3D Conditional GAN generator that outputs volumetric designs.
@@ -339,7 +289,6 @@ class Generator3D(nn.Module):
         z = z.view(z.size(0), z.size(1), 1, 1, 1)           # (B, latent_dim, 1, 1, 1)
         c = c.view(c.size(0), c.size(1), 1, 1, 1)  # (B, n_conds, 1, 1, 1)
 
-        
         z_feat = self.z_path(z)  # -> (B, num_filters[0]//2, 4, 4, 4)
         c_feat = self.c_path(c)  # -> (B, num_filters[0]//2, 4, 4, 4)
 
@@ -427,10 +376,6 @@ class Discriminator3D(nn.Module):
         Output:
             out: (B, out_channels, 1, 1, 1) - real/fake score
         """
-        # Resize volume to standard size (64x64x64) if needed
-        if x.shape[2:] != (64, 64, 64):
-            x = F.interpolate(x, size=(64, 64, 64), mode='trilinear', align_corners=False)
-
         # Expand conditions to match volume spatial dimensions
         c_expanded = c.expand(-1, -1, *x.shape[2:])  # (B, n_conds, D, H, W)
 
@@ -447,6 +392,31 @@ class Discriminator3D(nn.Module):
         # Final classification
         return self.final_conv(h)  # -> (B, out_channels, 1, 1, 1)
 
+def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
+    """Calculates the gradient penalty loss for WGAN GP"""
+    batch_size = real_samples.size(0)
+    # Random weight term for interpolation between real and fake samples
+    alpha = th.rand(batch_size, 1, 1, 1, 1, device=device)
+    alpha = alpha.expand_as(real_samples)
+    # Get interpolated samples
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    d_interpolates = discriminator(interpolates, conds)
+    # For multi-dimensional output, take mean
+    fake = th.ones_like(d_interpolates, device=device, requires_grad=False)
+    # Get gradient w.r.t. interpolates
+    gradients = autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=fake,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    gradients = gradients.view(batch_size, -1)
+    gradient_norm = gradients.norm(2, dim=1)
+    gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
+    return gradient_penalty
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
@@ -454,6 +424,7 @@ if __name__ == "__main__":
     problem = BUILTIN_PROBLEMS[args.problem_id]()
     problem.reset(seed=args.seed)
 
+    # Extract 3D design space information
     design_shape = problem.design_space.shape
     if len(design_shape) != 3:
         raise ValueError(f"Expected 3D design shape, got {design_shape}")
@@ -517,17 +488,21 @@ if __name__ == "__main__":
     print(f"Generator parameters: {gen_params:,}")
     print(f"Discriminator parameters: {disc_params:,}")
 
-    # Setup data
+    # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
+    
+    # Extract 3d designs and conditions
     designs_3d = training_ds["optimal_design"]
     condition_tensors = [training_ds[key] for key in problem.conditions_keys]
     
     training_ds = th.utils.data.TensorDataset(designs_3d, *condition_tensors)
     dataloader = th.utils.data.DataLoader(
-        training_ds, batch_size=args.batch_size, shuffle=True
+        training_ds, 
+        batch_size=args.batch_size, 
+        shuffle=True,
     )
 
-    # Optimizers
+    # Optimizers for all components
     optimizer_encoder = th.optim.Adam(encoder.parameters(), lr=args.lr_enc, betas=(args.b1, args.b2))
     optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr_gen, betas=(args.b1, args.b2))
     optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr_disc, betas=(args.b1, args.b2))
@@ -538,8 +513,10 @@ if __name__ == "__main__":
         encoder.eval()
         generator.eval()
         
-        z = th.randn((n_designs, args.latent_dim), device=device)
+        # Sample noise with proper 5d shape
+        z = th.randn((n_designs, args.latent_dim, 1, 1, 1), device=device)
         
+        # Create condition grid
         all_conditions = th.stack(condition_tensors, dim=1)
         linspaces = [
             th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_designs, device=device) 
@@ -547,7 +524,7 @@ if __name__ == "__main__":
         ]
         desired_conds = th.stack(linspaces, dim=1)
         
-        gen_volumes = generator(z, desired_conds)
+        gen_volumes = generator(z, desired_conds.reshape(-1, n_conds, 1, 1, 1))
         
         encoder.train()
         generator.train()
@@ -560,14 +537,22 @@ if __name__ == "__main__":
     
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
-            designs_3d = data[0].unsqueeze(1)  # (B, 1, D, H, W)
-            # Pad to (B, 1, 64, 64, 64) if needed
-            if designs_3d.shape[2:] == (51, 51, 51):
-                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
-                
+            # Extract 3D Designs and conditions
+            designs_3d = data[0] # (B,D,H,W)
+            original_shape = designs_3d.shape
+            
+            # Debug: Print original shape
+            print(f"Original designs_3d shape: {designs_3d.shape}")
+            
+            # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
+            if len(original_shape) == 4:
+                designs_3d = designs_3d.unsqueeze(1)  # (B, 1, D, H, W)
+            
             condition_data = data[1:]
             conds = th.stack(condition_data, dim=1)
             conds_expanded = conds.reshape(-1, n_conds, 1, 1, 1)
+            
+            
             
             batch_size, _, D, H, W = designs_3d.shape
             
@@ -579,6 +564,7 @@ if __name__ == "__main__":
             slices = slices.permute(0, 2, 1, 3, 4)          # (B, n_slices, 1, H, W)
             slices = slices.reshape(-1, 1, H, W)             # (B*n_slices, 1, H, W)
 
+            print(f"Slices shape: {slices.shape} (B*n_slices, 1, H, W)")
             # Pass all slices through encoder
             mu, logvar = encoder(slices)                 # (B*D, latent_dim)
 
@@ -595,14 +581,36 @@ if __name__ == "__main__":
 
             z_encoded = reparameterize(mu, logvar)
 
+            # Move to device and add channel dimension
+            conds = conds.to(device)
+
             # Reconstruct
             reconstructed = generator(z_encoded, conds)
             
             if reconstructed.shape[2:] == (51, 51, 51):
                 reconstructed = F.pad(reconstructed, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
             
+            print(f"Reconstructed shape: {reconstructed.shape} (B, 1, D, H, W)")
+            
+            # Pad to (B, 1, 64, 64, 64) if needed
+            if designs_3d.shape[2:] == (51, 51, 51):
+                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+            designs_3d = designs_3d.to(device)
+            
+            # Debug: Print final shape before discriminator
+            print(f"Final designs_3d shape: {designs_3d.shape}")
+        
             # VAE losses
-            recon_loss = reconstruction_loss(reconstructed, designs_3d)
+            # Create a mask: 1 for real data, 0 for padding
+            mask = th.ones_like(designs_3d)
+            if original_shape == (51, 51, 51):
+                mask = F.pad(
+                    th.ones((batch_size, 1, 51, 51, 51), device=designs_3d.device),
+                    (6, 7, 6, 7, 6, 7), mode='constant', value=0
+                )
+
+            # Compute masked loss
+            recon_loss = ((reconstructed - designs_3d) ** 2 * mask).sum() / mask.sum()
             
             # ==================
             # Train Encoder
