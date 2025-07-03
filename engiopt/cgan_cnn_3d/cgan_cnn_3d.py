@@ -509,6 +509,12 @@ if __name__ == "__main__":
             d_loss.backward()
             optimizer_discriminator.step()
 
+            # --- Discriminator accuracy logging ---
+            with th.no_grad():
+                real_acc = (real_validity > 0).float().mean().item()
+                fake_acc = (fake_validity < 0).float().mean().item()
+                disc_acc = 0.5 * (real_acc + fake_acc)
+
             # ----------
             #  Logging
             # ----------
@@ -518,6 +524,9 @@ if __name__ == "__main__":
                 wandb.log({
                     "d_loss": d_loss.item(),
                     "g_loss": g_loss.item(),
+                    "disc_real_acc": real_acc,
+                    "disc_fake_acc": fake_acc,
+                    "disc_acc": disc_acc,
                     "epoch": epoch,
                     "batch": batches_done,
                 })
