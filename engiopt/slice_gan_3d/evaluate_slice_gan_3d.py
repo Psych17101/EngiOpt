@@ -69,7 +69,7 @@ if __name__ == "__main__":
 
     # Restores the pytorch model from wandb
     if args.wandb_entity is not None:
-        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_cgan_cnn_3d_generator_3d:seed_{seed}"
+        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_slice_gan_3d:seed_{seed}"
     else:
         artifact_path = f"{args.wandb_project}/{args.problem_id}_cgan_cnn_3d_generator_3d:seed_{seed}"
 
@@ -85,7 +85,7 @@ if __name__ == "__main__":
         raise RunRetrievalError
     artifact_dir = artifact.download()
 
-    ckpt_path = os.path.join(artifact_dir, "generator_3d.pth")
+    ckpt_path = os.path.join(artifact_dir, "generator_slicegan.pth")
     ckpt = th.load(ckpt_path, map_location=th.device(device))
     # Safer debug output
     for key in ckpt.keys():
@@ -128,7 +128,7 @@ if __name__ == "__main__":
         {
             "seed": seed,
             "problem_id": args.problem_id,
-            "model_id": "cgan_cnn_3d",
+            "model_id": "slice_gan_3d",
             "n_samples": args.n_samples,
             "sigma": args.sigma,
         }

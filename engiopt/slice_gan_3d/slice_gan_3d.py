@@ -48,13 +48,13 @@ class Args:
     # Algorithm specific
     n_epochs: int = 300
     """number of epochs of training"""
-    batch_size: int = 16  # Can use larger batch size than 3D conv
+    batch_size: int = 8  # Can use larger batch size than 3D conv
     """size of the batches"""
-    lr_gen: float = 10e-5
+    lr_gen: float = 1e-4
     """learning rate for the generator"""
-    lr_disc: float = 10e-5
+    lr_disc: float = 1e-5
     """learning rate for the discriminator"""
-    b1: float = 0.9
+    b1: float = 0.5
     """decay of first order momentum of gradient"""
     b2: float = 0.99
     """decay of first order momentum of gradient"""
@@ -66,9 +66,11 @@ class Args:
     """interval between volume samples"""
     
     # SliceGAN specific parameters
-    discrim_iters: int = 5
+    discrim_iters: int = 1
     """Discriminator update"""
-    slice_sampling_rate: float = 0.8
+    gen_iters: int = 1
+    """Generator update"""
+    slice_sampling_rate: float = 0.5
     """Fraction of slices to sample during training"""
     use_all_axes: bool = True
     """Use slices from all three axes (XY, XZ, YZ)"""
@@ -133,11 +135,7 @@ def extract_random_slices(volumes: th.Tensor, axis: int, n_slices: int = None, t
             batch_indices = th.arange(B, device=volumes.device).unsqueeze(1).expand(-1, n_slices)
             slices = volumes[batch_indices.flatten(), :, :, :, pos_indices.flatten()]
             positions = positions.flatten()
-    
-    # CRITICAL FIX: Resize ALL slices to target_size x target_size
-    if slices.shape[2:] != (target_size, target_size):
-        slices = F.interpolate(slices, size=(target_size, target_size), mode='bilinear', align_corners=False)
-    
+
     return slices, positions
 
 
@@ -276,6 +274,9 @@ class SliceGenerator3D(nn.Module):
             out: (B, out_channels, D, H, W) - 3D design
         """
         # Run noise & condition through separate stems
+        z = z.view(z.size(0), z.size(1), 1, 1, 1)           # (B, latent_dim, 1, 1, 1)
+        c = c.view(c.size(0), c.size(1), 1, 1, 1)  # (B, n_conds, 1, 1, 1)
+
         z_feat = self.z_path(z)  # -> (B, num_filters[0]//2, 4, 4, 4)
         c_feat = self.c_path(c)  # -> (B, num_filters[0]//2, 4, 4, 4)
 
@@ -354,10 +355,7 @@ class SliceDiscriminator2D(nn.Module):
         Returns:
             out: (B, out_channels, 1, 1) real/fake score
         """
-        # CRITICAL FIX: Always resize to target size regardless of input dimensions
-        if x.shape[2:] != (self.target_size, self.target_size):
-            x = F.interpolate(x, size=(self.target_size, self.target_size), mode='bilinear', align_corners=False)
-        
+
         # Expand conditions to match image spatial dimensions
         all_conds = th.cat([design_conds, slice_pos], dim=1)  # (B, n_design_conds + 1, 1, 1)
         conds_expanded = all_conds.expand(-1, -1, *x.shape[2:])  # (B, n_design_conds + 1, H, W)
@@ -375,26 +373,32 @@ class SliceDiscriminator2D(nn.Module):
         # Final classification
         return self.final_conv(h)  # (B, out_channels, 1, 1)
 
-def compute_gradient_penalty(discriminator, real_samples, fake_samples, 
-                           real_conds_axis, real_pos_axis, batch_size, device, lambda_gp=10.0):
+def compute_gradient_penalty(discriminator, real_samples, fake_samples,
+                           real_conds, fake_conds, real_pos, fake_pos, device, lambda_gp=10.0):
     """Calculates the gradient penalty loss for WGAN GP"""
+    import torch as th
+    from torch import autograd
+    
     # Random weight term for interpolation between real and fake samples
     alpha = th.rand(real_samples.size(0), 1, 1, 1, device=device)
     alpha = alpha.expand_as(real_samples)
+    
     # Get interpolated samples
-    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
-    
-    # Interpolate conditions too
-    alpha_cond = th.rand(real_conds_axis.size(0), 1, 1, 1, device=device)
-    alpha_cond = alpha_cond.expand_as(real_conds_axis)
-    interpolated_conds = alpha_cond * real_conds_axis + (1 - alpha_cond) * real_conds_axis
-    
-    alpha_pos = th.rand(real_conds_axis.size(0), 1, 1, 1, device=device) 
-    alpha_pos = alpha_pos.expand_as(real_pos_axis)
-    interpolated_pos = alpha_pos * real_pos_axis + (1 - alpha_pos) * real_pos_axis
-    
+    interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad_(True)
+   
+    # Interpolate conditions between real and fake
+    alpha_cond = th.rand(real_conds.size(0), 1, 1, 1, device=device)
+    alpha_cond = alpha_cond.expand_as(real_conds)
+    interpolated_conds = alpha_cond * real_conds + (1 - alpha_cond) * fake_conds
+   
+    # Interpolate positions between real and fake
+    alpha_pos = th.rand(real_pos.size(0), 1, 1, 1, device=device)
+    alpha_pos = alpha_pos.expand_as(real_pos)
+    interpolated_pos = alpha_pos * real_pos + (1 - alpha_pos) * fake_pos
+   
+    # Get discriminator output for interpolated samples
     d_interpolates = discriminator(interpolates, interpolated_conds, interpolated_pos)
-    
+   
     # Get gradient w.r.t. interpolates
     gradients = autograd.grad(
         outputs=d_interpolates,
@@ -404,8 +408,9 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples,
         retain_graph=True,
         only_inputs=True
     )[0]
-    
-    gradients = gradients.view(real_samples.size(0), -1)
+   
+    # Calculate gradient penalty
+    gradients = gradients.view(gradients.size(0), -1)
     gradient_penalty = lambda_gp * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
     return gradient_penalty
 
@@ -421,12 +426,13 @@ if __name__ == "__main__":
     if len(design_shape) != 3:
         raise ValueError(f"Expected 3D design shape, got {design_shape}")
     
-    
     conditions = problem.conditions
     n_conds = len(conditions)
+    print(n_conds)
     condition_names = [cond[0] for cond in conditions]
+    print(condition_names)
 
-    # Logging
+    # Setup Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
         wandb.init(project=args.wandb_project, entity=args.wandb_entity, 
@@ -498,7 +504,7 @@ if __name__ == "__main__":
         shuffle=True,
     )
 
-    # Create separate optimizers for each generator and discriminator
+    # Create separate optimizers for generator and each discriminator
     optimizer_generator = th.optim.Adam(slice_generator.parameters(), lr=args.lr_gen, betas=(args.b1, args.b2))
     
     optimizer_discriminators = {}
@@ -514,26 +520,27 @@ if __name__ == "__main__":
         """Sample n_designs^n_conditions 3D volumes from the SliceGAN."""
         slice_generator.eval()
 
+        # Sample noise with proper 5d shape
+        z = th.randn((n_designs, args.latent_dim, 1, 1, 1), device=device, dtype=th.float)
+        
         # Create condition grid
         all_conditions = th.stack(condition_tensors, dim=1)
         linspaces = [
             th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_designs, device=device) 
             for i in range(all_conditions.shape[1])
         ]
-        desired_conds = th.stack(th.meshgrid(*linspaces, indexing='ij'), dim=-1).reshape(-1, all_conditions.shape[1])
-
-        # Match z size to number of condition combinations
-        total_samples = desired_conds.shape[0]
-        z = th.randn((total_samples, args.latent_dim), device=device, dtype=th.float)
-
-        z_3d = z.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (total_samples, latent_dim, 1, 1, 1)
-        desired_conds_3d = desired_conds.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (total_samples, n_conds, 1, 1, 1)
-
-        gen_volumes = slice_generator(z_3d, desired_conds_3d)  # (total_samples, out_channels, D, H, W)
+        
+        desired_conds = th.stack(linspaces, dim=1)
+        
+        # Generate 3D volumes
+        gen_volumes = slice_generator(z, desired_conds.reshape(-1, n_conds, 1, 1, 1))
+        
         slice_generator.train()
-        return gen_volumes, desired_conds
+        return desired_conds, gen_volumes
 
-# ------ Training Loop ------
+    # ------------=
+    # Training Loop 
+    # -------------
     print("Starting SliceGAN training...")
 
     last_disc_acc = {axis: 0.0 for axis in slice_discriminators.keys()}  # Track discriminator accuracy per axis
@@ -542,32 +549,30 @@ if __name__ == "__main__":
         for i, batch in enumerate(dataloader):
             # Extract 3D designs and conditions
             designs_3d = batch[0]  # (B, D, H, W)
-            condition_data = batch[1:]  # List of condition tensors
             
-            # Convert condition data to float tensors and stack
-            condition_tensors_batch = []
-            for cond_tensor in condition_data:
-                if not isinstance(cond_tensor, th.Tensor):
-                    # Convert to float tensor if it's object type or not a tensor
-                    if hasattr(cond_tensor, '__iter__') and not isinstance(cond_tensor, str):
-                        cond_tensor = th.tensor([float(x) for x in cond_tensor], device=device)
-                    else:
-                        cond_tensor = th.tensor(float(cond_tensor), device=device)
-                else:
-                    cond_tensor = cond_tensor.float()
-                condition_tensors_batch.append(cond_tensor)
+            # Debug: Print original shape
+            print(f"Original designs_3d shape: {designs_3d.shape}")
             
-            conds = th.stack(condition_tensors_batch, dim=1)  # (B, n_conds)
-            
-            # Move to device and add channel dimension to designs
-            designs_3d = designs_3d.to(device).unsqueeze(1)  # (B, 1, D, H, W)
-            conds = conds.to(device)
+            # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
+            if len(designs_3d.shape) == 4:
+                designs_3d = designs_3d.unsqueeze(1)  # (B, 1, D, H, W)
             
             # Pad to (B, 1, 64, 64, 64) if needed
             if designs_3d.shape[2:] == (51, 51, 51):
                 designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
             
-            batch_size = designs_3d.shape[0]
+            # Debug: Print final shape before discriminator
+            print(f"Final designs_3d shape: {designs_3d.shape}")
+        
+            condition_data = batch[1:]  # List of condition tensors
+            conds = th.stack(condition_data, dim=1)  # (B, n_conds)
+            conds_expanded = conds.reshape(-1, n_conds, 1, 1, 1)
+            
+            # Move to device and add channel dimension to designs
+            designs_3d = designs_3d.to(device)
+            conds = conds.to(device)
+            
+            batch_size, _, D, H,W = designs_3d.shape
             
             # Calculate number of slices to sample per axis
             n_slices_xy = max(1, int(args.slice_sampling_rate * D))
@@ -581,42 +586,21 @@ if __name__ == "__main__":
 
             if 'xy' in slice_discriminators:
                 xy_slices, xy_positions = extract_random_slices(designs_3d, axis=0, n_slices=n_slices_xy)
-                # CRITICAL FIX: Ensure 64x64 dimensions
-                if xy_slices.shape[2:] != (64, 64):
-                    xy_slices = F.interpolate(xy_slices, size=(64, 64), mode='bilinear', align_corners=False)
                 real_slices['xy'] = xy_slices
                 slice_positions['xy'] = xy_positions
                 slice_conds['xy'] = conds.repeat_interleave(n_slices_xy, dim=0)
 
             if 'xz' in slice_discriminators:
                 xz_slices, xz_positions = extract_random_slices(designs_3d, axis=1, n_slices=n_slices_xz)
-                # CRITICAL FIX: Ensure 64x64 dimensions
-                if xz_slices.shape[2:] != (64, 64):
-                    xz_slices = F.interpolate(xz_slices, size=(64, 64), mode='bilinear', align_corners=False)
                 real_slices['xz'] = xz_slices
                 slice_positions['xz'] = xz_positions
                 slice_conds['xz'] = conds.repeat_interleave(n_slices_xz, dim=0)
 
             if 'yz' in slice_discriminators:
                 yz_slices, yz_positions = extract_random_slices(designs_3d, axis=2, n_slices=n_slices_yz)
-                # CRITICAL FIX: Ensure 64x64 dimensions
-                if yz_slices.shape[2:] != (64, 64):
-                    yz_slices = F.interpolate(yz_slices, size=(64, 64), mode='bilinear', align_corners=False)
                 real_slices['yz'] = yz_slices
                 slice_positions['yz'] = yz_positions
                 slice_conds['yz'] = conds.repeat_interleave(n_slices_yz, dim=0)
-            
-            # Generate fake volumes once (used for both discriminator and generator training)
-            z = th.randn(batch_size, args.latent_dim, 1, 1, 1, device=device)
-            conds_3d = conds.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (B, n_conds, 1, 1, 1)
-            fake_volumes = slice_generator(z, conds_3d)
-            
-            # Pad to (B, 1, 64, 64, 64) if needed
-            if fake_volumes.shape[2:] == (51, 51, 51):
-                fake_volumes = F.pad(fake_volumes, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
-            
-            # Update dimensions after padding
-            _, _, D_padded, H_padded, W_padded = fake_volumes.shape
             
             # ---------------------
             #  Train Discriminators
@@ -625,54 +609,65 @@ if __name__ == "__main__":
             real_losses = {}
             fake_losses = {}
             
-            for discrim_iter in range(args.discrim_iters):
-                # For each axis discriminator
+            for disc_iter in range(args.discrim_iters):  # This should be n_D from algorithm
+                
+                # For each axis a = 1, 2, 3 (Line 7)
                 for axis_name, discriminator in slice_discriminators.items():
                     optimizer_discriminators[axis_name].zero_grad()
                     
-                    # Train on real slices
-                    real_slices_axis = real_slices[axis_name]
-                    real_conds_axis = slice_conds[axis_name].unsqueeze(-1).unsqueeze(-1)
-                    real_pos_axis = slice_positions[axis_name].unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                    # Sample latent vector (Line 5) - MOVED INSIDE THE AXIS LOOP
+                    z = th.randn((batch_size, args.latent_dim), device=device)
+                    fake_volumes = slice_generator(z, conds_expanded)
                     
-                    out_real = discriminator(real_slices_axis, real_conds_axis, real_pos_axis).mean()
+                    if fake_volumes.shape[2:] == (51, 51, 51):
+                        fake_volumes = F.pad(fake_volumes, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
                     
-                    # Train on fake slices (from the generated volume)
-                    with th.no_grad():
-                        if axis_name == 'xy':
-                            fake_slices_axis = fake_volumes.permute(0, 2, 1, 3, 4).reshape(-1, 1, H_padded, W_padded)
-                            # CRITICAL FIX: Ensure 64x64 dimensions
-                            if fake_slices_axis.shape[2:] != (64, 64):
-                                fake_slices_axis = F.interpolate(fake_slices_axis, size=(64, 64), mode='bilinear', align_corners=False)
-                        elif axis_name == 'xz':
-                            fake_slices_axis = fake_volumes.permute(0, 3, 1, 2, 4).reshape(-1, 1, D_padded, W_padded)
-                            # CRITICAL FIX: Ensure 64x64 dimensions
-                            if fake_slices_axis.shape[2:] != (64, 64):
-                                fake_slices_axis = F.interpolate(fake_slices_axis, size=(64, 64), mode='bilinear', align_corners=False)
-                        elif axis_name == 'yz':
-                            fake_slices_axis = fake_volumes.permute(0, 4, 1, 2, 3).reshape(-1, 1, D_padded, H_padded)
-                            # CRITICAL FIX: Ensure 64x64 dimensions
-                            if fake_slices_axis.shape[2:] != (64, 64):
-                                fake_slices_axis = F.interpolate(fake_slices_axis, size=(64, 64), mode='bilinear', align_corners=False)
-
-                    # Match batch size
-                    fake_slices_axis = fake_slices_axis[:real_slices_axis.shape[0]]
-                    out_fake = discriminator(fake_slices_axis, real_conds_axis, real_pos_axis).mean()
+                    axis_idx = {'xy': 0, 'xz': 1, 'yz': 2}[axis_name]
+                    
+                    # Determine number of slices for this axis
+                    if axis_name == 'xy':
+                        n_slices = max(1, int(args.slice_sampling_rate * designs_3d.shape[2]))  # D
+                    elif axis_name == 'xz':
+                        n_slices = max(1, int(args.slice_sampling_rate * designs_3d.shape[3]))  # H  
+                    elif axis_name == 'yz':
+                        n_slices = max(1, int(args.slice_sampling_rate * designs_3d.shape[4]))  # W
+                    
+                    # Extract slices from real data
+                    real_slices, real_positions = extract_random_slices(designs_3d, axis=axis_idx, n_slices=n_slices)
+                    real_slice_conds = conds.repeat_interleave(n_slices, dim=0)
+                    
+                    # Extract slices from fake data (Line 9)
+                    fake_slices, fake_positions = extract_random_slices(fake_volumes, axis=axis_idx, n_slices=n_slices)
+                    fake_slice_conds = conds.repeat_interleave(n_slices, dim=0)
+                    
+                    # Format conditioning for discriminator
+                    real_conds_formatted = real_slice_conds.unsqueeze(-1).unsqueeze(-1)
+                    fake_conds_formatted = fake_slice_conds.unsqueeze(-1).unsqueeze(-1)
+                    real_pos_formatted = real_positions.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                    fake_pos_formatted = fake_positions.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                    
+                    # Discriminator outputs
+                    out_real = discriminator(real_slices, real_conds_formatted, real_pos_formatted)
+                    out_fake = discriminator(fake_slices, fake_conds_formatted, fake_pos_formatted)
                     
                     # Gradient penalty
-                    gradient_penalty = compute_gradient_penalty(discriminator, real_slices_axis, fake_slices_axis, 
-                                                        real_conds_axis, real_pos_axis, batch_size, device)
+                    gradient_penalty = compute_gradient_penalty(discriminator, real_slices, fake_slices, 
+                                    real_conds_formatted, fake_conds_formatted, 
+                                    real_pos_formatted, fake_pos_formatted, device)
                     
                     # Wasserstein loss with GP
-                    d_loss = out_fake - out_real + gradient_penalty
+                    d_loss = out_fake.mean() - out_real.mean() + gradient_penalty
+                    if d_loss.dim() > 0:
+                        d_loss = d_loss.mean()
+                    
                     d_loss.backward()
                     optimizer_discriminators[axis_name].step()
                     
                     # Store losses (only from the last critic iteration for logging)
-                    if discrim_iter == args.discrim_iters - 1:
+                    if disc_iter == args.discrim_iters - 1:
                         d_losses[axis_name] = d_loss.item()
-                        real_losses[axis_name] = out_real.item()
-                        fake_losses[axis_name] = out_fake.item()
+                        real_losses[axis_name] = out_real.mean().item()
+                        fake_losses[axis_name] = out_fake.mean().item()
                         
                         with th.no_grad():
                             real_acc = (out_real > 0).float().mean()
@@ -682,80 +677,50 @@ if __name__ == "__main__":
             # -----------------
             #  Train Generator 
             # -----------------
-            if i % args.discrim_iters == 0:
+            for gen_iter in range(args.gen_iters): 
                 optimizer_generator.zero_grad()
                 
-                # Generate new fake volumes for generator training
-                z = th.randn(batch_size, args.latent_dim, 1, 1, 1, device=device)
-                conds_3d = conds.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (B, n_conds, 1, 1, 1)
-                fake_volumes = slice_generator(z, conds_3d)
+                # Sample latent vector (Line 17)
+                z = th.randn((batch_size, args.latent_dim), device=device)
+                # Generate 3D volume (Line 18)
+                fake_volumes = slice_generator(z, conds_expanded)
                 
-                # Pad to (B, 1, 64, 64, 64) if needed
-                if fake_volumes.shape[2:] == (51, 51, 51):
-                    fake_volumes = F.pad(fake_volumes, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+                total_g_loss = 0  # Aggregate loss across all axes (Line 23)
                 
-                # Update dimensions after padding
-                _, _, D_padded, H_padded, W_padded = fake_volumes.shape
-                
-                g_loss = 0
-                # For each axis discriminator
+                # For each axis a = 1, 2, 3 (Line 19)
                 for axis_name, discriminator in slice_discriminators.items():
-                    # Extract slices from generated volume and feed to discriminator
+                    axis_idx = {'xy': 0, 'xz': 1, 'yz': 2}[axis_name]
+                    
+                    # Determine number of slices for this axis
                     if axis_name == 'xy':
-                        # Permute and reshape: (B, 1, D, H, W) -> (B*D, 1, H, W)
-                        fake_slices = fake_volumes.permute(0, 2, 1, 3, 4).reshape(-1, 1, H_padded, W_padded)
+                        n_slices = max(1, int(args.slice_sampling_rate * fake_volumes.shape[2]))
                     elif axis_name == 'xz':
-                        fake_slices = fake_volumes.permute(0, 3, 1, 2, 4).reshape(-1, 1, D_padded, W_padded)
+                        n_slices = max(1, int(args.slice_sampling_rate * fake_volumes.shape[3]))
                     elif axis_name == 'yz':
-                        fake_slices = fake_volumes.permute(0, 4, 1, 2, 3).reshape(-1, 1, D_padded, H_padded)
+                        n_slices = max(1, int(args.slice_sampling_rate * fake_volumes.shape[4]))
                     
-                    # CRITICAL FIX: Ensure 64x64 dimensions for generator training too
-                    if fake_slices.shape[2:] != (64, 64):
-                        fake_slices = F.interpolate(fake_slices, size=(64, 64), mode='bilinear', align_corners=False)
+                    # Extract slices from generated volume (Line 21)
+                    fake_slices, fake_positions = extract_random_slices(fake_volumes, axis=axis_idx, n_slices=n_slices)
+                    fake_slice_conds = conds.repeat_interleave(n_slices, dim=0)
                     
-                    # Create corresponding conditions and positions for slices
-                    n_slices_per_vol = fake_slices.shape[0] // batch_size
-                    slice_conds_gen = conds.repeat_interleave(n_slices_per_vol, dim=0).unsqueeze(-1).unsqueeze(-1)
-                    slice_positions_gen = th.linspace(0, 1, n_slices_per_vol, device=device).repeat(batch_size).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                    # Format conditioning
+                    fake_conds_formatted = fake_slice_conds.unsqueeze(-1).unsqueeze(-1)
+                    fake_pos_formatted = fake_positions.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
                     
-                    # Generator wants discriminator to think fake slices are real (maximize score)
-                    output = discriminator(fake_slices, slice_conds_gen, slice_positions_gen)
-                    g_loss -= output.mean()  # Negative because we want to maximize
+                    # Generator loss (Line 22)
+                    output = discriminator(fake_slices, fake_conds_formatted, fake_pos_formatted)
+                    g_loss_axis = -output.mean()  # Negative because we want to maximize discriminator output
+                    
+                    total_g_loss += g_loss_axis
                 
-                g_loss.backward()
+                # Update generator parameters (Line 23)
+                total_g_loss.backward()
                 optimizer_generator.step()
-            else:
-                # Set g_loss to previous value for logging consistency
-                g_loss = 0  # or keep track of last g_loss value
-                    
-            # Monitor and adjust discriminator learning rates based on accuracy
-            batches_done = epoch * len(dataloader) + i
-            if batches_done % 100 == 0 and batches_done > 0:
-                avg_disc_acc = sum(last_disc_acc.values()) / len(last_disc_acc)
-                if avg_disc_acc < 0.1 or avg_disc_acc > 0.9:  # Discriminator too weak or too strong
-                    print(f"Adjusting learning rates due to discriminator accuracy: {avg_disc_acc:.3f}")
-                    for axis_name, optimizer in optimizer_discriminators.items():
-                        for param_group in optimizer.param_groups:
-                            if avg_disc_acc < 0.1:
-                                param_group['lr'] *= 1.1  # Increase discriminator LR
-                                print(f"  Increased {axis_name} discriminator LR to {param_group['lr']:.6f}")
-                            else:
-                                param_group['lr'] *= 0.9  # Decrease discriminator LR
-                                print(f"  Decreased {axis_name} discriminator LR to {param_group['lr']:.6f}")
-                    
-                    # Also adjust generator learning rate in opposite direction
-                    for param_group in optimizer_generator.param_groups:
-                        if avg_disc_acc < 0.1:
-                            param_group['lr'] *= 0.9  # Decrease generator LR
-                            print(f"  Decreased generator LR to {param_group['lr']:.6f}")
-                        else:
-                            param_group['lr'] *= 1.1  # Increase generator LR
-                            print(f"  Increased generator LR to {param_group['lr']:.6f}")
-                    
+            
             # ----------
             #  Logging
             # ----------
-            
+            batches_done = epoch * len(dataloader) + i
             if args.track:
                 # Log individual axis losses
                 log_dict = {}
@@ -767,7 +732,7 @@ if __name__ == "__main__":
                 
                 # Log averages
                 log_dict["d_loss_avg"] = sum(d_losses.values()) / len(d_losses) if d_losses else 0
-                log_dict["g_loss"] = g_loss.item() if isinstance(g_loss, th.Tensor) else g_loss
+                log_dict["total_g_loss"] = total_g_loss.item() if isinstance(total_g_loss, th.Tensor) else 0
                 log_dict["disc_acc_avg"] = sum(last_disc_acc.values()) / len(last_disc_acc)
                 log_dict["epoch"] = epoch
                 log_dict["batch"] = batches_done
@@ -777,7 +742,7 @@ if __name__ == "__main__":
                 if i % 10 == 0:  # Print less frequently
                     avg_d_loss = sum(d_losses.values()) / len(d_losses) if d_losses else 0
                     avg_disc_acc = sum(last_disc_acc.values()) / len(last_disc_acc)
-                    g_loss_val = g_loss.item() if isinstance(g_loss, th.Tensor) else g_loss
+                    g_loss_val = total_g_loss.item() if isinstance(total_g_loss, th.Tensor) else total_g_loss
                     
                     print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
                         f"[D loss: {avg_d_loss:.4f}] [G loss: {g_loss_val:.4f}] "
@@ -793,7 +758,7 @@ if __name__ == "__main__":
                 if batches_done % args.sample_interval == 0:
                     print("Generating 3D design samples...")
                     
-                    gen_volumes, gen_conds = sample_3d_designs(9)
+                    gen_conds, gen_volumes = sample_3d_designs(9)
                     
                     img_fname = f"images_slicegan/{batches_done}.png"
                     visualize_3d_designs(
@@ -826,7 +791,7 @@ if __name__ == "__main__":
                     "batches_done": epoch * len(dataloader) + len(dataloader) - 1,
                     "generator": slice_generator.state_dict(),
                     "optimizer_generator": optimizer_generator.state_dict(),
-                    "loss": g_loss,
+                    "loss": total_g_loss,
                     "n_conds": n_conds,
                     "args": vars(args)
                 }
@@ -834,10 +799,10 @@ if __name__ == "__main__":
                 gen_filename = "generator_slicegan.pth"
                 th.save(ckpt_gen, gen_filename)
                 
-                if args.track:
-                    artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator_slice_{axis_name}", type="model")
-                    artifact_gen.add_file(gen_filename)
-                    wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+            if args.track:
+                artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator_slice_gan_3d", type="model")
+                artifact_gen.add_file(gen_filename)
+                wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
             
             # Save discriminators
             for axis_name, discriminator in slice_discriminators.items():
