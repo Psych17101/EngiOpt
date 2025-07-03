@@ -129,31 +129,6 @@ def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_na
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
-    """Calculates the gradient penalty loss for WGAN GP"""
-    batch_size = real_samples.size(0)
-    # Random weight term for interpolation between real and fake samples
-    alpha = th.rand(batch_size, 1, 1, 1, 1, device=device)
-    alpha = alpha.expand_as(real_samples)
-    # Get interpolated samples
-    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
-    d_interpolates = discriminator(interpolates, conds)
-    # For multi-dimensional output, take mean
-    fake = th.ones_like(d_interpolates, device=device, requires_grad=False)
-    # Get gradient w.r.t. interpolates
-    gradients = autograd.grad(
-        outputs=d_interpolates,
-        inputs=interpolates,
-        grad_outputs=fake,
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True
-    )[0]
-    gradients = gradients.view(batch_size, -1)
-    gradient_norm = gradients.norm(2, dim=1)
-    gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
-    return gradient_penalty
-
 class Generator3D(nn.Module):
     """3D Conditional GAN generator that outputs volumetric designs.
 
@@ -229,6 +204,10 @@ class Generator3D(nn.Module):
             out: (B, out_channels, D, H, W) - 3D design
         """
         # Run noise & condition through separate stems
+        z = z.view(z.size(0), z.size(1), 1, 1, 1)           # (B, latent_dim, 1, 1, 1)
+        c = c.view(c.size(0), c.size(1), 1, 1, 1)  # (B, n_conds, 1, 1, 1)
+
+        
         z_feat = self.z_path(z)  # -> (B, num_filters[0]//2, 4, 4, 4)
         c_feat = self.c_path(c)  # -> (B, num_filters[0]//2, 4, 4, 4)
 
@@ -316,10 +295,6 @@ class Discriminator3D(nn.Module):
         Output:
             out: (B, out_channels, 1, 1, 1) - real/fake score
         """
-        # Resize volume to standard size (64x64x64) if needed
-        if x.shape[2:] != (64, 64, 64):
-            x = F.interpolate(x, size=(64, 64, 64), mode='trilinear', align_corners=False)
-
         # Expand conditions to match volume spatial dimensions
         c_expanded = c.expand(-1, -1, *x.shape[2:])  # (B, n_conds, D, H, W)
 
@@ -335,6 +310,31 @@ class Discriminator3D(nn.Module):
 
         # Final classification
         return self.final_conv(h)  # -> (B, out_channels, 1, 1, 1)
+
+def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
+    """Calculates the gradient penalty loss for WGAN GP"""
+    batch_size = real_samples.size(0)
+    # Random weight term for interpolation between real and fake samples
+    alpha = th.rand(batch_size, 1, 1, 1, 1, device=device)
+    alpha = alpha.expand_as(real_samples)
+    # Get interpolated samples
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    d_interpolates = discriminator(interpolates, conds)
+    # For multi-dimensional output, take mean
+    fake = th.ones_like(d_interpolates, device=device, requires_grad=False)
+    # Get gradient w.r.t. interpolates
+    gradients = autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=fake,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    gradients = gradients.view(batch_size, -1)
+    gradient_norm = gradients.norm(2, dim=1)
+    gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
+    return gradient_penalty
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -417,14 +417,12 @@ if __name__ == "__main__":
     optimizer_generator = th.optim.Adam(generator.parameters(), lr=args.lr_gen, betas=(args.b1, args.b2))
     optimizer_discriminator = th.optim.Adam(discriminator.parameters(), lr=args.lr_disc, betas=(args.b1, args.b2))
 
-
-
     @th.no_grad()
     def sample_3d_designs(n_designs: int) -> tuple[th.Tensor, th.Tensor]:
         """Sample n_designs 3D volumes from the generator."""
         generator.eval()
         
-        # Sample noise
+        # Sample noise with proper 5D shape
         z = th.randn((n_designs, args.latent_dim, 1, 1, 1), device=device, dtype=th.float)
 
         # Create condition grid
@@ -452,34 +450,48 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # Extract 3D designs and conditions
-            designs_3d = data[0]  # (B, D, H, W)
-            condition_data = data[1:]  # List of condition tensors
+            designs_3d = data[0]  # (B, D, H, W) - should be (B, 51, 51, 51)
             
-            # Stack conditions and reshape for 3D: (B, n_conds, 1, 1, 1)
-            conds = th.stack(condition_data, dim=1).reshape(-1, n_conds, 1, 1, 1)
+            # Debug: Print original shape
+            print(f"Original designs_3d shape: {designs_3d.shape}")
             
-            # Add channel dimension to designs: (B, 1, D, H, W)
-            designs_3d = designs_3d.unsqueeze(1)
+            # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
+            if len(designs_3d.shape) == 4:
+                designs_3d = designs_3d.unsqueeze(1)  # (B, 1, D, H, W)
             
             # Pad to (B, 1, 64, 64, 64) if needed
             if designs_3d.shape[2:] == (51, 51, 51):
                 designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+            
+            # Debug: Print final shape before discriminator
+            print(f"Final designs_3d shape: {designs_3d.shape}")
+                
+            condition_data = data[1:]  # List of condition tensors
+            # Stack conditions and reshape for 3D: (B, n_conds, 1, 1, 1)
+            conds = th.stack(condition_data, dim=1).reshape(-1, n_conds, 1, 1, 1)
 
-            batch_size = designs_3d.size(0)
-
-            # Adversarial ground truths
-            valid = th.ones((batch_size, 1, 1, 1, 1), requires_grad=False, device=device)
-            fake = th.zeros((batch_size, 1, 1, 1, 1), requires_grad=False, device=device)
+            # Move data to device
+            designs_3d = designs_3d.to(device)
+            conds = conds.to(device)  
+            
+            batch_size = designs_3d.size(0) 
+                     
             # -----------------
             #  Sample noise and generate fake 3D designs
-            z = th.randn((batch_size, args.latent_dim, 1, 1, 1), device=device)
-            gen_designs_3d = generator(z, conds)
+            # -----------------
+            z = th.randn((batch_size, args.latent_dim), device=device)
+            z = z.view(batch_size, args.latent_dim, 1, 1, 1)  # Reshape for 3D
+            fake_designs_3d = generator(z, conds)
+            
+            # Debug: Print generated shapes
+            print(f"Generated fake_designs_3d shape: {fake_designs_3d.shape}")
+            
             # -----------------
             #  Train Generator
             # -----------------
             optimizer_generator.zero_grad()
             # Generator loss: maximize D(G(z)), so minimize -D(G(z))
-            g_loss = -discriminator(gen_designs_3d, conds).mean()
+            g_loss = -discriminator(fake_designs_3d, conds).mean()
             g_loss.backward()
             optimizer_generator.step()
 
@@ -488,11 +500,11 @@ if __name__ == "__main__":
             # ---------------------
             optimizer_discriminator.zero_grad()
             real_validity = discriminator(designs_3d, conds)
-            fake_validity = discriminator(gen_designs_3d.detach(), conds)
+            fake_validity = discriminator(fake_designs_3d.detach(), conds)
             # Wasserstein loss
             d_loss = -real_validity.mean() + fake_validity.mean()
             # Gradient penalty
-            gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, gen_designs_3d.detach(), conds, device)
+            gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, fake_designs_3d.detach(), conds, device)
             d_loss += gradient_penalty
             d_loss.backward()
             optimizer_discriminator.step()
@@ -539,7 +551,6 @@ if __name__ == "__main__":
             # Clean up GPU memory periodically
             if i % 50 == 0:
                 th.cuda.empty_cache() if device.type == 'cuda' else None
-
         # --------------
         #  Save models
         # --------------
