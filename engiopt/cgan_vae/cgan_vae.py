@@ -542,7 +542,7 @@ if __name__ == "__main__":
             original_shape = designs_3d.shape
             
             # Debug: Print original shape
-            print(f"Original designs_3d shape: {designs_3d.shape}")
+            # print(f"Original designs_3d shape: {designs_3d.shape}")
             
             # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
             if len(original_shape) == 4:
@@ -564,7 +564,7 @@ if __name__ == "__main__":
             slices = slices.permute(0, 2, 1, 3, 4)          # (B, n_slices, 1, H, W)
             slices = slices.reshape(-1, 1, H, W)             # (B*n_slices, 1, H, W)
 
-            print(f"Slices shape: {slices.shape} (B*n_slices, 1, H, W)")
+            # print(f"Slices shape: {slices.shape} (B*n_slices, 1, H, W)")
             # Pass all slices through encoder
             mu, logvar = encoder(slices)                 # (B*D, latent_dim)
 
@@ -590,7 +590,7 @@ if __name__ == "__main__":
             if reconstructed.shape[2:] == (51, 51, 51):
                 reconstructed = F.pad(reconstructed, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
             
-            print(f"Reconstructed shape: {reconstructed.shape} (B, 1, D, H, W)")
+            # print(f"Reconstructed shape: {reconstructed.shape} (B, 1, D, H, W)")
             
             # Pad to (B, 1, 64, 64, 64) if needed
             if designs_3d.shape[2:] == (51, 51, 51):
@@ -598,7 +598,7 @@ if __name__ == "__main__":
             designs_3d = designs_3d.to(device)
             
             # Debug: Print final shape before discriminator
-            print(f"Final designs_3d shape: {designs_3d.shape}")
+            # print(f"Final designs_3d shape: {designs_3d.shape}")
         
             # VAE losses
             # Create a mask: 1 for real data, 0 for padding
@@ -664,7 +664,14 @@ if __name__ == "__main__":
             d_loss += gradient_penalty
             d_loss.backward()
             optimizer_discriminator.step()
-                
+
+            # --- Discriminator accuracy logging ---
+            with th.no_grad():
+                real_acc = (real_validity > 0).float().mean().item()
+                fake_acc = (fake_validity < 0).float().mean().item()
+                fake_rand_acc = (fake_validity_random < 0).float().mean().item()
+                disc_acc = 0.5 * (fake_acc + fake_rand_acc)
+
             # ----------
             #  Logging
             # ----------
@@ -680,6 +687,8 @@ if __name__ == "__main__":
                     "d_loss": d_loss.item(),
                     "real_validity": real_validity.mean().item(),
                     "fake_validity": fake_validity.mean().item(),
+                    "disc_real_acc": real_acc,
+                    "disc_fake_acc": disc_acc,
                     "epoch": epoch,
                     "batch": batches_done,
                 }
@@ -711,9 +720,11 @@ if __name__ == "__main__":
             if i % 50 == 0:
                 th.cuda.empty_cache() if device.type == 'cuda' else None
 
+        # -------------
         # Save models
+        # -------------
         if args.save_model and epoch == args.n_epochs - 1:
-            print("Saving models...")
+            print("Saving VAE models...")
             
             # Save all three models
             th.save({
