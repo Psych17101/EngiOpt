@@ -33,7 +33,7 @@ class Args:
     """Number of generated samples per seed."""
     sigma: float = 10.0
     """Kernel bandwidth for MMD and DPP metrics."""
-    output_csv: str = "cgan_cnn_2d_{problem_id}_metrics.csv"
+    output_csv: str = "slice_gan_3d_{problem_id}_metrics.csv"
     """Output CSV path template; may include {problem_id}."""
 
 
@@ -69,9 +69,9 @@ if __name__ == "__main__":
 
     # Restores the pytorch model from wandb
     if args.wandb_entity is not None:
-        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_slice_gan_3d:seed_{seed}"
+        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_slice_gan_3d_generator_slice_gan_3d:seed_{seed}"
     else:
-        artifact_path = f"{args.wandb_project}/{args.problem_id}_cgan_cnn_3d_generator_3d:seed_{seed}"
+        artifact_path = f"{args.wandb_project}/{args.problem_id}_slice_gan_3d_generator_slice_gan_3d:seed_{seed}"
 
     api = wandb.Api()
     artifact = api.artifact(artifact_path, type="model")

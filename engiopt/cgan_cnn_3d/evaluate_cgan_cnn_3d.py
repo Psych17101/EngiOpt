@@ -33,7 +33,7 @@ class Args:
     """Number of generated samples per seed."""
     sigma: float = 10.0
     """Kernel bandwidth for MMD and DPP metrics."""
-    output_csv: str = "cgan_cnn_2d_{problem_id}_metrics.csv"
+    output_csv: str = "cgan_cnn_3d_{problem_id}_metrics.csv"
     """Output CSV path template; may include {problem_id}."""
 
 
