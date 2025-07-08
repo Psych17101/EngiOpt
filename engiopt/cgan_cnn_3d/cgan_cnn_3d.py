@@ -12,6 +12,7 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from engiopt.metrics import mmd, dpp_diversity
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
@@ -27,7 +28,7 @@ import wandb
 class Args:
     """Command-line arguments for 3D cDCGAN."""
 
-    problem_id: str = "beams3d"  # Assume 3D problem
+    problem_id: str = "heatconduction3d"  # Assume 3D problem
     """Problem identifier for 3D engineering design."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
@@ -63,11 +64,6 @@ class Args:
     """dimensionality of the latent space"""
     sample_interval: int = 800  # Less frequent sampling due to 3D visualization cost
     """interval between volume samples"""
-    
-    # 3D specific parameters
-    use_efficient_model: bool = False
-    """Use memory-efficient 3D model variant."""
-
 
 def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_names: list, 
                         save_path: str, max_designs: int = 9):
@@ -445,7 +441,12 @@ if __name__ == "__main__":
     # ----------
     print("Starting 3D GAN training...")
     
+    g_loss_history = []
+    d_loss_history = []
+    mmd_sigma = 10.0  # You can adjust this
+
     last_disc_acc = 0.0  # Track discriminator accuracy
+    mmd_values = []  # At the top of your training loop
 
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
@@ -515,21 +516,59 @@ if __name__ == "__main__":
                 fake_acc = (fake_validity < 0).float().mean().item()
                 disc_acc = 0.5 * (real_acc + fake_acc)
 
+            # After computing g_loss and d_loss:
+            g_loss_history.append(g_loss.item())
+            d_loss_history.append(d_loss.item())
+            if len(g_loss_history) > 50:
+                g_loss_history.pop(0)
+                d_loss_history.pop(0)
+            g_loss_var = np.var(g_loss_history)
+            d_loss_var = np.var(d_loss_history)
+            g_d_loss_gap = abs(g_loss.item() - d_loss.item())
+
+            # Compute MMD and DPP diversity every N batches (e.g., every 100)
+            mmd_value = None
+            dpp_value = None
+            if i % 100 == 0:
+                # Use a small batch for metrics to save memory
+                gen_np = fake_designs_3d.detach().cpu().numpy().reshape(fake_designs_3d.size(0), -1)
+                real_np = designs_3d.detach().cpu().numpy().reshape(designs_3d.size(0), -1)
+                mmd_value = mmd(gen_np, real_np, sigma=mmd_sigma)
+                # If mmd is a string like "0.1234" or "NaN", convert or handle it
+                try:
+                    mmd_value = float(mmd_value)
+                except (ValueError, TypeError):
+                    mmd_value = float('nan')  # or some default numeric value
+                dpp_value = dpp_diversity(gen_np, sigma=mmd_sigma)
+                
+                if mmd_value is not None:
+                    mmd_values.append(mmd_value)
+            
+
             # ----------
             #  Logging
             # ----------
             batches_done = epoch * len(dataloader) + i
-            
+
             if args.track:
-                wandb.log({
+                log_dict = {
                     "d_loss": d_loss.item(),
                     "g_loss": g_loss.item(),
                     "disc_real_acc": real_acc,
                     "disc_fake_acc": fake_acc,
                     "disc_acc": disc_acc,
+                    "g_loss_var": g_loss_var,
+                    "d_loss_var": d_loss_var,
+                    "g_d_loss_gap": g_d_loss_gap,
                     "epoch": epoch,
                     "batch": batches_done,
-                })
+                }
+                if mmd_value is not None:
+                    log_dict["mmd"] = mmd_value
+                if dpp_value is not None:
+                    log_dict["dpp_diversity"] = dpp_value
+
+                wandb.log(log_dict)
                 
                 if i % 10 == 0:  # Print less frequently due to 3D complexity
                     print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
@@ -602,7 +641,10 @@ if __name__ == "__main__":
             print("3D models saved successfully!")
 
     if args.track:
-        wandb.finish()
+        if mmd_values:
+            final_mmd = np.mean(mmd_values[-10:])
+            wandb.log({"mmd": final_mmd, "epoch": args.n_epochs})
+            wandb.finish()
     
     print("3D GAN training completed!")
 
@@ -626,3 +668,4 @@ if __name__ == "__main__":
         # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
 
     print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
+
