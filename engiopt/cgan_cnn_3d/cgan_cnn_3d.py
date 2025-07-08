@@ -64,6 +64,10 @@ class Args:
     """dimensionality of the latent space"""
     sample_interval: int = 800  # Less frequent sampling due to 3D visualization cost
     """interval between volume samples"""
+    gen_iters: int = 1
+    """Number of generator updates per batch"""
+    discrim_iters: int = 1
+    """Number of discriminator updates per batch"""
 
 def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_names: list, 
                         save_path: str, max_designs: int = 9):
@@ -483,32 +487,31 @@ if __name__ == "__main__":
             z = th.randn((batch_size, args.latent_dim), device=device)
             z = z.view(batch_size, args.latent_dim, 1, 1, 1)  # Reshape for 3D
             fake_designs_3d = generator(z, conds)
-            
+
             # Debug: Print generated shapes
             print(f"Generated fake_designs_3d shape: {fake_designs_3d.shape}")
-            
+
             # -----------------
             #  Train Generator
             # -----------------
-            optimizer_generator.zero_grad()
-            # Generator loss: maximize D(G(z)), so minimize -D(G(z))
-            g_loss = -discriminator(fake_designs_3d, conds).mean()
-            g_loss.backward()
-            optimizer_generator.step()
+            for _ in range(args.gen_iters):
+                optimizer_generator.zero_grad()
+                g_loss = -discriminator(fake_designs_3d, conds).mean()
+                g_loss.backward()
+                optimizer_generator.step()
 
             # ---------------------
             #  Train Discriminator (WGAN-GP)
             # ---------------------
-            optimizer_discriminator.zero_grad()
-            real_validity = discriminator(designs_3d, conds)
-            fake_validity = discriminator(fake_designs_3d.detach(), conds)
-            # Wasserstein loss
-            d_loss = -real_validity.mean() + fake_validity.mean()
-            # Gradient penalty
-            gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, fake_designs_3d.detach(), conds, device)
-            d_loss += gradient_penalty
-            d_loss.backward()
-            optimizer_discriminator.step()
+            for _ in range(args.discrim_iters):
+                optimizer_discriminator.zero_grad()
+                real_validity = discriminator(designs_3d, conds)
+                fake_validity = discriminator(fake_designs_3d.detach(), conds)
+                d_loss = -real_validity.mean() + fake_validity.mean()
+                gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, fake_designs_3d.detach(), conds, device)
+                d_loss += gradient_penalty
+                d_loss.backward()
+                optimizer_discriminator.step()
 
             # --- Discriminator accuracy logging ---
             with th.no_grad():
