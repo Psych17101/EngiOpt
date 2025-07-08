@@ -77,6 +77,11 @@ class Args:
     n_slices: int = 9
     """Number of slices to extract from each volume for training"""
 
+    gen_iters: int = 1
+    """Number of generator updates per batch"""
+    discrim_iters: int = 1
+    """Number of discriminator updates per batch"""
+
 
 def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_names: list, 
                         save_path: str, max_designs: int = 9):
@@ -615,7 +620,6 @@ if __name__ == "__main__":
             # ==================
             # Train Encoder
             # ==================
-
             optimizer_encoder.zero_grad()
             E_loss = args.recon_weight * recon_loss + args.kl_weight * mvkl_loss
             E_loss.backward(retain_graph=True)
@@ -624,46 +628,41 @@ if __name__ == "__main__":
             # ==================
             # Train Generator
             # ==================
+            for _ in range(args.gen_iters):
+                # Re-compute reconstruction for generator (to avoid shared graph issues)
+                z_encoded_gen = reparameterize(mu.detach(), logvar.detach())
+                reconstructed_gen = generator(z_encoded_gen, conds)
+                if reconstructed_gen.shape[2:] == (51, 51, 51):
+                    reconstructed_gen = F.pad(reconstructed_gen, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+                recon_loss_gen = reconstruction_loss(reconstructed_gen, designs_3d)
 
-            # Re-compute reconstruction for generator (to avoid shared graph issues)
-            z_encoded_gen = reparameterize(mu.detach(), logvar.detach())
-            reconstructed_gen = generator(z_encoded_gen, conds)
-            if reconstructed_gen.shape[2:] == (51, 51, 51):
-                reconstructed_gen = F.pad(reconstructed_gen, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
-            recon_loss_gen = reconstruction_loss(reconstructed_gen, designs_3d)
-
-            # GAN loss for generator
-            optimizer_generator.zero_grad()
-            g_loss_adv = -discriminator(reconstructed_gen, conds_expanded).mean()
-
-            g_loss = g_loss_adv + args.recon_weight * recon_loss_gen
-            g_loss.backward()
-            optimizer_generator.step()
-            
+                # GAN loss for generator
+                optimizer_generator.zero_grad()
+                g_loss_ws = -discriminator(reconstructed_gen, conds_expanded).mean()
+                g_loss = g_loss_ws + args.recon_weight * recon_loss_gen
+                g_loss.backward()
+                optimizer_generator.step()
 
             # ==================
             # Train Discriminator
             # ==================
-            optimizer_discriminator.zero_grad()
-            
-            # Wasserstein discriminator loss
-            real_validity = discriminator(designs_3d, conds_expanded)
-            fake_validity = discriminator(reconstructed_gen.detach(), conds_expanded)
-            
-            # Random noise generation
-            z_random = th.randn((batch_size, args.latent_dim), device=device)
-            fake_designs = generator(z_random, conds)
-            if fake_designs.shape[2:] == (51, 51, 51):
-                fake_designs = F.pad(fake_designs, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
-            fake_validity_random = discriminator(fake_designs.detach(), conds_expanded)
-            
-            # Wasserstein loss
-            d_loss = -(real_validity.mean() - (fake_validity.mean() + fake_validity_random.mean()) / 2)
-            
-            gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, reconstructed_gen.detach(), conds_expanded, device)
-            d_loss += gradient_penalty
-            d_loss.backward()
-            optimizer_discriminator.step()
+            for _ in range(args.discrim_iters):
+                optimizer_discriminator.zero_grad()
+                # Wasserstein discriminator loss
+                real_validity = discriminator(designs_3d, conds_expanded)
+                fake_validity = discriminator(reconstructed_gen.detach(), conds_expanded)
+                # Random noise generation
+                z_random = th.randn((batch_size, args.latent_dim), device=device)
+                fake_designs = generator(z_random, conds)
+                if fake_designs.shape[2:] == (51, 51, 51):
+                    fake_designs = F.pad(fake_designs, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+                fake_validity_random = discriminator(fake_designs.detach(), conds_expanded)
+                # Wasserstein loss
+                d_loss = -(real_validity.mean() - (fake_validity.mean() + fake_validity_random.mean()) / 2)
+                gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, reconstructed_gen.detach(), conds_expanded, device)
+                d_loss += gradient_penalty
+                d_loss.backward()
+                optimizer_discriminator.step()
 
             # --- Discriminator accuracy logging ---
             with th.no_grad():
