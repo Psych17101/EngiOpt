@@ -48,11 +48,11 @@ class Args:
     # Algorithm specific
     n_epochs: int = 300
     """number of epochs of training"""
-    batch_size: int = 8  # Can use larger batch size than 3D conv
+    batch_size: int = 8
     """size of the batches"""
     lr_gen: float = 1e-4
     """learning rate for the generator"""
-    lr_disc: float = 1e-5
+    lr_disc: float = 4e-4
     """learning rate for the discriminator"""
     b1: float = 0.5
     """decay of first order momentum of gradient"""
@@ -66,11 +66,11 @@ class Args:
     """interval between volume samples"""
     
     # SliceGAN specific parameters
-    discrim_iters: int = 1
+    discrim_iters: int = 3
     """Discriminator update"""
     gen_iters: int = 1
     """Generator update"""
-    slice_sampling_rate: float = 0.5
+    slice_sampling_rate: float = 0.3
     """Fraction of slices to sample during training"""
     use_all_axes: bool = True
     """Use slices from all three axes (XY, XZ, YZ)"""
