@@ -21,6 +21,9 @@ Install EngiOpt dependencies:
 cd EngiOpt/
 pip install -e .
 ```
+
+You might want to install a specific PyTorch version, e.g., with CUDA on top of it, see [PyTorch install](https://pytorch.org/get-started/locally/).
+
 If you're modifying EngiBench, you can install it from source and as editable:
 ```
 git clone git@github.com:IDEALLab/EngiBench.git

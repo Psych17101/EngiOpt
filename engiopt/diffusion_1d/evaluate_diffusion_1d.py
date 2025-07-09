@@ -1,4 +1,4 @@
-"""Evaluation for the Diffusion 1d."""
+"""Evaluation for the Diffusion 1D."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import os
 from denoising_diffusion_pytorch import GaussianDiffusion1D
 from denoising_diffusion_pytorch import Unet1D
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from gymnasium import spaces
 import numpy as np
 import pandas as pd
 import torch as th
@@ -15,6 +16,7 @@ import tyro
 
 from engiopt import metrics
 from engiopt.dataset_sample_conditions import sample_conditions
+from engiopt.diffusion_1d.diffusion_1d import prepare_data
 import wandb
 
 
@@ -24,113 +26,122 @@ class Args:
 
     problem_id: str = "airfoil"
     """Problem identifier."""
-    seed_start: int = 1
-    """Random starting seed."""
-    seed_range: int = 1
-    """Range of random seeds to run."""
+    seed: int = 1
+    """Random seed to run."""
     wandb_project: str = "engiopt"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
-    n_samples: int = 5
+    n_samples: int = 10
     """Number of generated samples per seed."""
     sigma: float = 10.0
     """Kernel bandwidth for MMD and DPP metrics."""
+    output_csv: str = "diffusion_1d_{problem_id}_metrics.csv"
+    """Output CSV path template; may include {problem_id}."""
 
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
-    # Initialize an empty DataFrame to collect results across seeds
-    results_df = pd.DataFrame()
+    seed = args.seed
+    problem = BUILTIN_PROBLEMS[args.problem_id]()
+    problem.reset(seed=seed)
 
-    for seed in range(args.seed_start, args.seed_start + args.seed_range):
-        # Instantiate and reset problem
-        problem = BUILTIN_PROBLEMS[args.problem_id]()
-        problem.reset(seed=seed)
+    # Seeding for reproducibility
+    th.manual_seed(seed)
+    rng = np.random.default_rng(seed)
+    th.backends.cudnn.deterministic = True
 
-        # Seeding for reproducibility
-        th.manual_seed(seed)
-        rng = np.random.default_rng(seed)
-        th.backends.cudnn.deterministic = True
+    # Select device
+    if th.backends.mps.is_available():
+        device = th.device("mps")
+    elif th.cuda.is_available():
+        device = th.device("cuda")
+    else:
+        device = th.device("cpu")
 
-        # Select device
-        if th.backends.mps.is_available():
-            device = th.device("mps")
-        elif th.cuda.is_available():
-            device = th.device("cuda")
-        else:
-            device = th.device("cpu")
+    if isinstance(problem.design_space, spaces.Box):
+        design_shape = problem.design_space.shape
+    else:
+        dummy_design, _ = problem.random_design()
+        flattened = spaces.flatten(problem.design_space, dummy_design)
+        design_shape = np.array(flattened).shape
 
-        ### Set up testing conditions ###
-        conditions_tensor, sampled_conditions, sampled_designs_np, _ = sample_conditions(
-            problem=problem,
-            n_samples=args.n_samples,
-            device=device,
-            seed=seed,
-        )
+    # Add padding for the UNet (1D requires the input to be divisible by 8)
+    padding_size = (8 - design_shape[0] % 8) % 8  # Only pad if needed
+    padded_size = design_shape[0] + padding_size
+    if padding_size > 0:
+        print(f"Padding design from {design_shape[0]} to {padded_size} dimensions")
+    design_shape = (padded_size,)
 
-        # Restore the diffusion model from wandb
-        if args.wandb_entity is not None:
-            artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_diffusion_1d_model:seed_{seed}"
-        else:
-            artifact_path = f"{args.wandb_project}/{args.problem_id}_diffusion_1d_model:seed_{seed}"
+    ### Set up testing conditions ###
+    conditions_tensor, sampled_conditions, sampled_designs_np, _ = sample_conditions(
+        problem=problem,
+        n_samples=args.n_samples,
+        device=device,
+        seed=seed,
+    )
 
-        api = wandb.Api()
-        artifact = api.artifact(artifact_path, type="model")
+    ### Load Diffusion Model ###
+    if args.wandb_entity is not None:
+        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_diffusion_1d_model:seed_{seed}"
+    else:
+        artifact_path = f"{args.wandb_project}/{args.problem_id}_diffusion_1d_model:seed_{seed}"
 
-        class RunRetrievalError(ValueError):
-            def __init__(self):
-                super().__init__("Failed to retrieve the run")
+    api = wandb.Api()
+    artifact = api.artifact(artifact_path, type="model")
 
-        run = artifact.logged_by()
-        if run is None or not hasattr(run, "config"):
-            raise RunRetrievalError
+    class RunRetrievalError(ValueError):
+        def __init__(self):
+            super().__init__("Failed to retrieve the run")
 
-        artifact_dir = artifact.download()
-        ckpt_path = os.path.join(artifact_dir, "model.pth")
-        ckpt = th.load(ckpt_path, map_location=device)
+    run = artifact.logged_by()
+    if run is None or not hasattr(run, "config"):
+        raise RunRetrievalError
 
-        # Build model & diffusion
-        model = Unet1D(
-            dim=run.config["unet_dim"],  # sinusoidal positional embedding size
-            channels=run.config["n_channels"],  # input channel count
-        ).to(device)
+    artifact_dir = artifact.download()
+    ckpt_path = os.path.join(artifact_dir, "model.pth")
+    ckpt = th.load(ckpt_path, map_location=device)
 
-        diffusion = GaussianDiffusion1D(
-            model,
-            seq_length=int(np.prod(problem.design_space.shape)),
-            auto_normalize=run.config["auto_norm"],
-        ).to(device)
+    _, design_normalizer = prepare_data(problem, padding_size, device)
 
-        diffusion.load_state_dict(ckpt["model"])
-        diffusion.eval()
+    model = Unet1D(
+        dim=run.config["unet_dim"],  # Used for the sinusoidal positional embeddings
+        channels=run.config["n_channels"],  # Number of channels in the input
+    ).to(device)
 
-        # Generate designs
-        gen_designs = diffusion.sample(args.n_samples)
-        gen_designs_np = gen_designs.detach().cpu().numpy()
-        gen_designs_np = gen_designs_np.reshape(args.n_samples, *problem.design_space.shape)
+    diffusion = GaussianDiffusion1D(
+        model,
+        seq_length=np.prod(design_shape),
+        auto_normalize=True,
+    ).to(device)
 
-        # Clip to valid range (problem dependent)
-        gen_designs_np = np.clip(gen_designs_np, 1e-3, 1.0)
+    diffusion.load_state_dict(ckpt["model"])
 
-        # Compute metrics
-        metrics_dict = metrics.metrics(
-            problem,
-            gen_designs_np,
-            sampled_designs_np,
-            sampled_conditions,
-            sigma=args.sigma,
-        )
-        metrics_dict["seed"] = seed
+    # Sample noise and generate designs
+    gen_designs = diffusion.sample(args.n_samples).squeeze(1)
+    gen_designs = design_normalizer.denormalize(gen_designs)
+    gen_designs_np = gen_designs.detach().cpu().numpy()
+    if padding_size > 0:
+        gen_designs_np = gen_designs_np[:, :-padding_size]
 
-        # Append to results DataFrame
-        results_df = pd.concat(
-            [results_df, pd.DataFrame([metrics_dict])],
-            ignore_index=True,
-        )
+    fail_ratio = metrics.simulate_failure_ratio(
+        problem=problem,
+        gen_designs=gen_designs_np,
+        sampled_conditions=sampled_conditions,
+    )
 
-        # Save intermediate CSV after each seed
-        csv_path = f"diffusion_1d_{args.problem_id}_metrics.csv"
-        results_df.to_csv(csv_path, index=False)
-        print(f"Seed {seed} done; results saved to {csv_path}")
+    # Append result row to CSV
+    results_dict = {
+        "problem_id": args.problem_id,
+        "model_id": "diffusion_1d",
+        "seed": seed,
+        "n_samples": args.n_samples,
+        "fail_ratio": fail_ratio,
+    }
+    metrics_df = pd.DataFrame(results_dict, index=[0])
+    out_path = args.output_csv.format(problem_id=args.problem_id)
+    write_header = not os.path.exists(out_path)
+    metrics_df.to_csv(out_path, mode="a", header=write_header, index=False)
+
+    print(f"Seed {seed} done; appended to {out_path}")

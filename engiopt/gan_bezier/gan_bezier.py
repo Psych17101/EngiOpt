@@ -414,6 +414,27 @@ class Normalizer:
         return x * (self.max_val - self.min_val + self.eps) + self.min_val
 
 
+def prepare_data(problem, batch_size, device):
+    """Prepares the dataset and normalizer for training."""
+    problem_dataset = problem.dataset.with_format("torch")["train"]
+    design_scalar_keys = list(problem_dataset["optimal_design"][0].keys())
+    design_scalar_keys.remove("coords")
+    coords_set = [problem_dataset[i]["optimal_design"]["coords"] for i in range(len(problem_dataset))]
+    design_scalars = [example["optimal_design"][key] for example in problem_dataset for key in design_scalar_keys]
+    training_ds = th.utils.data.TensorDataset(
+        th.stack(coords_set),
+        th.stack(design_scalars).unsqueeze(1),
+        *[problem_dataset[key] for key, _ in problem.conditions],
+    )
+
+    dataloader = th.utils.data.DataLoader(training_ds, batch_size=batch_size, shuffle=True)
+    design_scalars_min = training_ds.tensors[1].amin(dim=0).to(device)
+    design_scalars_max = training_ds.tensors[1].amax(dim=0).to(device)
+
+    design_scalars_normalizer = Normalizer(design_scalars_min, design_scalars_max)
+    return dataloader, design_scalars_normalizer, design_scalar_keys
+
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
 
@@ -446,23 +467,8 @@ if __name__ == "__main__":
     coords_space: spaces.Box = problem.design_space["coords"]
     n_data_points = coords_space.shape[1]
 
-    # The Discriminator uses shape [N, 2, #points].
-    problem_dataset = problem.dataset.with_format("torch")["train"]
-    design_scalar_keys = list(problem_dataset["optimal_design"][0].keys())
-    design_scalar_keys.remove("coords")
-    coords_set = [problem_dataset[i]["optimal_design"]["coords"] for i in range(len(problem_dataset))]
-    design_scalars = [example["optimal_design"][key] for example in problem_dataset for key in design_scalar_keys]
-    training_ds = th.utils.data.TensorDataset(
-        th.stack(coords_set),
-        th.stack(design_scalars).unsqueeze(1),
-        *[problem_dataset[key] for key, _ in problem.conditions],
-    )
-
-    dataloader = th.utils.data.DataLoader(training_ds, batch_size=args.batch_size, shuffle=True)
-    design_scalars_min = training_ds.tensors[1].amin(dim=0).to(device)
-    design_scalars_max = training_ds.tensors[1].amax(dim=0).to(device)
-
-    design_scalars_normalizer = Normalizer(design_scalars_min, design_scalars_max)
+    # Prepare data
+    dataloader, design_scalars_normalizer, design_scalar_keys = prepare_data(problem, args.batch_size, device)
 
     generator = Generator(
         latent_dim=args.latent_dim,
