@@ -87,6 +87,7 @@ exclude = [
     ".venv",
     ".vscode",
     "__pypackages__",
+    ".ipynb",
     "_build",
     "buck-out",
     "build",
@@ -215,7 +216,7 @@ docstring-code-line-length = "dynamic"
 ###################################### PYRIGHT ########################################
 [tool.pyright]
 include = ["engiopt/**"]
-exclude = ["**/node_modules", "**/__pycache__", "**/templates/**", "**/study*"]
+exclude = ["**/node_modules", "**/__pycache__", "**/templates/**", "**/study*", "**/*.ipynb"]
 strict = []
 
 typeCheckingMode = "basic"
