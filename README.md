@@ -37,4 +37,5 @@ The integration with WandB allows us to access live dashboards of our runs (on t
 
 ## Colab notebooks
 We have some colab notebooks that show how to use some of the EngiBench/EngiOpt features.
-* [Example hard model](https://colab.research.google.com/github/IDEALLab/EngiOpt/blob/main/example_hard_model.ipynb)
+* [Example easy model (GAN)](https://colab.research.google.com/github/IDEALLab/EngiOpt/blob/main/example_easy_model.ipynb)
+* [Example hard model (Diffusion)](https://colab.research.google.com/github/IDEALLab/EngiOpt/blob/main/example_hard_model.ipynb)
