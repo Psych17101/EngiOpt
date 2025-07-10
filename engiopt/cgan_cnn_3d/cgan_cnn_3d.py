@@ -356,7 +356,7 @@ if __name__ == "__main__":
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
         wandb.init(project=args.wandb_project, entity=args.wandb_entity, 
-                  config=vars(args), save_code=True, name=run_name)
+                config=vars(args), save_code=True, name=run_name)
 
     # Seeding
     th.manual_seed(args.seed)
@@ -451,6 +451,7 @@ if __name__ == "__main__":
 
     last_disc_acc = 0.0  # Track discriminator accuracy
     mmd_values = []  # At the top of your training loop
+    dpp_values = []
 
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
@@ -480,7 +481,7 @@ if __name__ == "__main__":
             conds = conds.to(device)  
             
             batch_size = designs_3d.size(0) 
-                     
+                    
             # -----------------
             #  Sample noise and generate fake 3D designs
             # -----------------
@@ -546,6 +547,9 @@ if __name__ == "__main__":
                 
                 if mmd_value is not None:
                     mmd_values.append(mmd_value)
+                
+                if dpp_value is not None:
+                    dpp_values.append(dpp_value)
             
 
             # ----------
@@ -575,7 +579,7 @@ if __name__ == "__main__":
                 
                 if i % 10 == 0:  # Print less frequently due to 3D complexity
                     print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
-                          f"[D loss: {d_loss.item():.4f}] [G loss: {g_loss.item():.4f}]")
+                        f"[D loss: {d_loss.item():.4f}] [G loss: {g_loss.item():.4f}]")
 
                 # Sample and visualize 3D designs
                 if batches_done % args.sample_interval == 0:
@@ -647,6 +651,10 @@ if __name__ == "__main__":
         if mmd_values:
             final_mmd = np.mean(mmd_values[-10:])
             wandb.log({"mmd": final_mmd, "epoch": args.n_epochs})
+            wandb.finish()
+        if dpp_values:
+            final_dpp = np.mean(dpp_values[-10:])
+            wandb.log({"dpp": final_dpp, "epoch": args.n_epochs})
             wandb.finish()
     
     print("3D GAN training completed!")
