@@ -11,6 +11,7 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from engiopt.metrics import mmd, dpp_diversity
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
@@ -30,6 +31,8 @@ class Args:
     """Problem identifier for 3D engineering design."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
+    export: bool = False
+    """Export 3d Volume"""
 
     # Tracking
     track: bool = True
@@ -538,16 +541,15 @@ if __name__ == "__main__":
     # Training loop
     print("Starting 3D VAE-GAN training...")
     
-    # Initialize multiview_loss tensor outside the loop
-    
+    mmd_sigma = 10.0
+    mmd_values = []
+    dpp_values = []
+
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # Extract 3D Designs and conditions
             designs_3d = data[0] # (B,D,H,W)
             original_shape = designs_3d.shape
-            
-            # Debug: Print original shape
-            # print(f"Original designs_3d shape: {designs_3d.shape}")
             
             # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
             if len(original_shape) == 4:
@@ -556,9 +558,7 @@ if __name__ == "__main__":
             condition_data = data[1:]
             conds = th.stack(condition_data, dim=1)
             conds_expanded = conds.reshape(-1, n_conds, 1, 1, 1)
-            
-            
-            
+        
             batch_size, _, D, H, W = designs_3d.shape
             
             # --- Extract a subset of XY slices from each volume ---
@@ -568,8 +568,7 @@ if __name__ == "__main__":
             slices = designs_3d[:, :, slice_indices, :, :]  # (B, 1, n_slices, H, W)
             slices = slices.permute(0, 2, 1, 3, 4)          # (B, n_slices, 1, H, W)
             slices = slices.reshape(-1, 1, H, W)             # (B*n_slices, 1, H, W)
-
-            # print(f"Slices shape: {slices.shape} (B*n_slices, 1, H, W)")
+            
             # Pass all slices through encoder
             mu, logvar = encoder(slices)                 # (B*D, latent_dim)
 
@@ -594,17 +593,11 @@ if __name__ == "__main__":
             
             if reconstructed.shape[2:] == (51, 51, 51):
                 reconstructed = F.pad(reconstructed, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
-            
-            # print(f"Reconstructed shape: {reconstructed.shape} (B, 1, D, H, W)")
-            
-            # Pad to (B, 1, 64, 64, 64) if needed
+
             if designs_3d.shape[2:] == (51, 51, 51):
                 designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
             designs_3d = designs_3d.to(device)
-            
-            # Debug: Print final shape before discriminator
-            # print(f"Final designs_3d shape: {designs_3d.shape}")
-        
+
             # VAE losses
             # Create a mask: 1 for real data, 0 for padding
             mask = th.ones_like(designs_3d)
@@ -671,6 +664,25 @@ if __name__ == "__main__":
                 fake_rand_acc = (fake_validity_random < 0).float().mean().item()
                 disc_acc = 0.5 * (fake_acc + fake_rand_acc)
 
+            
+            # After reconstructed and designs_3d are available and on CPU:
+            mmd_value = None
+            dpp_value = None
+            if i % 100 == 0:
+                gen_np = reconstructed.detach().cpu().numpy().reshape(reconstructed.size(0), -1)
+                real_np = designs_3d.detach().cpu().numpy().reshape(designs_3d.size(0), -1)
+                mmd_value = mmd(gen_np, real_np, sigma=mmd_sigma)
+                dpp_value = dpp_diversity(gen_np, sigma=mmd_sigma)
+                try:
+                    mmd_value = float(mmd_value)
+                except (ValueError, TypeError):
+                    mmd_value = float('nan')
+                
+                if mmd_value is not None:
+                    mmd_values.append(mmd_value)
+                if dpp_value is not None:
+                    dpp_values.append(dpp_value)
+                    
             # ----------
             #  Logging
             # ----------
@@ -682,7 +694,7 @@ if __name__ == "__main__":
                     "recon_loss": recon_loss.item(),
                     "g_loss": g_loss.item(),
                     "mvkl_loss": mvkl_loss.item(),
-                    "g_loss_adv": g_loss_adv.item(),
+                    "g_loss_ws": g_loss_ws.item(),
                     "d_loss": d_loss.item(),
                     "real_validity": real_validity.mean().item(),
                     "fake_validity": fake_validity.mean().item(),
@@ -691,6 +703,11 @@ if __name__ == "__main__":
                     "epoch": epoch,
                     "batch": batches_done,
                 }
+                
+                if mmd_value is not None:
+                    log_dict["mmd"] = mmd_value
+                if dpp_value is not None:
+                    log_dict["dpp_diversity"] = dpp_value
                         
                 wandb.log(log_dict)
                 
@@ -743,29 +760,38 @@ if __name__ == "__main__":
                 artifact = wandb.Artifact(f"{args.problem_id}_{args.algo}_models", type="model")
                 artifact.add_file("multiview_3d_vaegan.pth")
                 wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
+            
+            print("3D vae models saved successfully!")
 
     if args.track:
+        if mmd_values:
+            final_mmd = np.mean(mmd_values[-10:])
+            wandb.log({"mmd": final_mmd, "epoch": args.n_epochs})
+        if dpp_values:
+            final_dpp = np.mean(dpp_values[-10:])
+            wandb.log({"dpp": final_dpp, "epoch": args.n_epochs})
         wandb.finish()
     
     print("Multiview 3D VAE-GAN training completed!")
     
-    # ---- Export final generated 3D designs for ParaView ----
-    print("Exporting final generated 3D designs for ParaView...")
-    generator.eval()
-    n_export = 8  # Number of designs to export
-    z = th.randn((n_export, args.latent_dim, 1, 1, 1), device=device)
-    all_conditions = th.stack(condition_tensors, dim=1)
-    linspaces = [
-        th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_export, device=device)
-        for i in range(all_conditions.shape[1])
-    ]
-    export_conds = th.stack(linspaces, dim=1)
-    gen_volumes = generator(z, export_conds.reshape(-1, n_conds, 1, 1, 1))
-    gen_volumes_np = gen_volumes.squeeze(1).detach().cpu().numpy()
+    if args.export:
+        # ---- Export final generated 3D designs for ParaView ----
+        print("Exporting final generated 3D designs for ParaView...")
+        generator.eval()
+        n_export = 8  # Number of designs to export
+        z = th.randn((n_export, args.latent_dim, 1, 1, 1), device=device)
+        all_conditions = th.stack(condition_tensors, dim=1)
+        linspaces = [
+            th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_export, device=device)
+            for i in range(all_conditions.shape[1])
+        ]
+        export_conds = th.stack(linspaces, dim=1)
+        gen_volumes = generator(z, export_conds.reshape(-1, n_conds, 1, 1, 1))
+        gen_volumes_np = gen_volumes.squeeze(1).detach().cpu().numpy()
 
-    os.makedirs("paraview_exports", exist_ok=True)
-    for i, vol in enumerate(gen_volumes_np):
-        np.save(f"paraview_exports/vae_gen3d_{i}.npy", vol)
-        # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
+        os.makedirs("paraview_exports", exist_ok=True)
+        for i, vol in enumerate(gen_volumes_np):
+            np.save(f"paraview_exports/vae_gen3d_{i}.npy", vol)
+            # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
 
-    print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
+        print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")

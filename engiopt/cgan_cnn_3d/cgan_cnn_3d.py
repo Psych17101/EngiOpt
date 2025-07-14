@@ -32,6 +32,8 @@ class Args:
     """Problem identifier for 3D engineering design."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
+    export: bool = False
+    """Export 3d Volume"""
 
     # Tracking
     track: bool = True
@@ -458,9 +460,6 @@ if __name__ == "__main__":
             # Extract 3D designs and conditions
             designs_3d = data[0]  # (B, D, H, W) - should be (B, 51, 51, 51)
             
-            # Debug: Print original shape
-            print(f"Original designs_3d shape: {designs_3d.shape}")
-            
             # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
             if len(designs_3d.shape) == 4:
                 designs_3d = designs_3d.unsqueeze(1)  # (B, 1, D, H, W)
@@ -468,9 +467,6 @@ if __name__ == "__main__":
             # Pad to (B, 1, 64, 64, 64) if needed
             if designs_3d.shape[2:] == (51, 51, 51):
                 designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
-            
-            # Debug: Print final shape before discriminator
-            print(f"Final designs_3d shape: {designs_3d.shape}")
                 
             condition_data = data[1:]  # List of condition tensors
             # Stack conditions and reshape for 3D: (B, n_conds, 1, 1, 1)
@@ -488,9 +484,6 @@ if __name__ == "__main__":
             z = th.randn((batch_size, args.latent_dim), device=device)
             z = z.view(batch_size, args.latent_dim, 1, 1, 1)  # Reshape for 3D
             fake_designs_3d = generator(z, conds)
-
-            # Debug: Print generated shapes
-            print(f"Generated fake_designs_3d shape: {fake_designs_3d.shape}")
 
             # -----------------
             #  Train Generator
@@ -538,12 +531,12 @@ if __name__ == "__main__":
                 gen_np = fake_designs_3d.detach().cpu().numpy().reshape(fake_designs_3d.size(0), -1)
                 real_np = designs_3d.detach().cpu().numpy().reshape(designs_3d.size(0), -1)
                 mmd_value = mmd(gen_np, real_np, sigma=mmd_sigma)
+                dpp_value = dpp_diversity(gen_np, sigma=mmd_sigma)
                 # If mmd is a string like "0.1234" or "NaN", convert or handle it
                 try:
                     mmd_value = float(mmd_value)
                 except (ValueError, TypeError):
                     mmd_value = float('nan')  # or some default numeric value
-                dpp_value = dpp_diversity(gen_np, sigma=mmd_sigma)
                 
                 if mmd_value is not None:
                     mmd_values.append(mmd_value)
@@ -570,6 +563,7 @@ if __name__ == "__main__":
                     "epoch": epoch,
                     "batch": batches_done,
                 }
+                
                 if mmd_value is not None:
                     log_dict["mmd"] = mmd_value
                 if dpp_value is not None:
@@ -651,32 +645,31 @@ if __name__ == "__main__":
         if mmd_values:
             final_mmd = np.mean(mmd_values[-10:])
             wandb.log({"mmd": final_mmd, "epoch": args.n_epochs})
-            wandb.finish()
         if dpp_values:
             final_dpp = np.mean(dpp_values[-10:])
             wandb.log({"dpp": final_dpp, "epoch": args.n_epochs})
-            wandb.finish()
+        wandb.finish()
     
     print("3D GAN training completed!")
+    if args.export:
+        # ---- Export final generated 3D designs for ParaView ----
+        print("Exporting final generated 3D designs for ParaView...")
+        generator.eval()
+        n_export = 8  # Number of designs to export
+        z = th.randn((n_export, args.latent_dim, 1, 1, 1), device=device)
+        all_conditions = th.stack(condition_tensors, dim=1)
+        linspaces = [
+            th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_export, device=device)
+            for i in range(all_conditions.shape[1])
+        ]
+        export_conds = th.stack(linspaces, dim=1)
+        gen_volumes = generator(z, export_conds.reshape(-1, n_conds, 1, 1, 1))
+        gen_volumes_np = gen_volumes.squeeze(1).detach().cpu().numpy()
 
-    # ---- Export final generated 3D designs for ParaView ----
-    print("Exporting final generated 3D designs for ParaView...")
-    generator.eval()
-    n_export = 8  # Number of designs to export
-    z = th.randn((n_export, args.latent_dim, 1, 1, 1), device=device)
-    all_conditions = th.stack(condition_tensors, dim=1)
-    linspaces = [
-        th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_export, device=device)
-        for i in range(all_conditions.shape[1])
-    ]
-    export_conds = th.stack(linspaces, dim=1)
-    gen_volumes = generator(z, export_conds.reshape(-1, n_conds, 1, 1, 1))
-    gen_volumes_np = gen_volumes.squeeze(1).detach().cpu().numpy()
+        os.makedirs("paraview_exports", exist_ok=True)
+        for i, vol in enumerate(gen_volumes_np):
+            np.save(f"paraview_exports/gen3d_{i}.npy", vol)
+            # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
 
-    os.makedirs("paraview_exports", exist_ok=True)
-    for i, vol in enumerate(gen_volumes_np):
-        np.save(f"paraview_exports/gen3d_{i}.npy", vol)
-        # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
-
-    print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
+        print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
 

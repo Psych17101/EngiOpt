@@ -13,6 +13,7 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
+from engiopt.metrics import mmd, dpp_diversity
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
@@ -32,6 +33,8 @@ class Args:
     """Problem identifier for 3D engineering design."""
     algo: str = os.path.basename(__file__)[: -len(".py")]
     """The name of this algorithm."""
+    export: bool = False
+    """Export 3d Volume"""
 
     # Tracking
     track: bool = True
@@ -545,13 +548,14 @@ if __name__ == "__main__":
 
     last_disc_acc = {axis: 0.0 for axis in slice_discriminators.keys()}  # Track discriminator accuracy per axis
 
+    mmd_sigma = 10.0
+    mmd_values = []
+    dpp_values = []
+
     for epoch in tqdm.trange(args.n_epochs):
         for i, batch in enumerate(dataloader):
             # Extract 3D designs and conditions
             designs_3d = batch[0]  # (B, D, H, W)
-            
-            # Debug: Print original shape
-            print(f"Original designs_3d shape: {designs_3d.shape}")
             
             # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
             if len(designs_3d.shape) == 4:
@@ -560,9 +564,6 @@ if __name__ == "__main__":
             # Pad to (B, 1, 64, 64, 64) if needed
             if designs_3d.shape[2:] == (51, 51, 51):
                 designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
-            
-            # Debug: Print final shape before discriminator
-            print(f"Final designs_3d shape: {designs_3d.shape}")
         
             condition_data = batch[1:]  # List of condition tensors
             conds = th.stack(condition_data, dim=1)  # (B, n_conds)
@@ -717,10 +718,28 @@ if __name__ == "__main__":
                 total_g_loss.backward()
                 optimizer_generator.step()
             
+            # Compute MMD and DPP diversity every 100 batches
+            mmd_value = None
+            dpp_value = None
+            if i % 100 == 0:
+                gen_np = fake_volumes.detach().cpu().numpy().reshape(fake_volumes.size(0), -1)
+                real_np = designs_3d.detach().cpu().numpy().reshape(designs_3d.size(0), -1)
+                mmd_value = mmd(gen_np, real_np, sigma=mmd_sigma)
+                dpp_value = dpp_diversity(gen_np, sigma=mmd_sigma)
+                try:
+                    mmd_value = float(mmd_value)
+                except (ValueError, TypeError):
+                    mmd_value = float('nan')
+                if mmd_value is not None:
+                    mmd_values.append(mmd_value)
+                if dpp_value is not None:
+                    dpp_values.append(dpp_value)
+                    
             # ----------
             #  Logging
             # ----------
             batches_done = epoch * len(dataloader) + i
+            
             if args.track:
                 # Log individual axis losses
                 log_dict = {}
@@ -736,6 +755,11 @@ if __name__ == "__main__":
                 log_dict["disc_acc_avg"] = sum(last_disc_acc.values()) / len(last_disc_acc)
                 log_dict["epoch"] = epoch
                 log_dict["batch"] = batches_done
+                
+                if mmd_value is not None:
+                    log_dict["mmd"] = mmd_value
+                if dpp_value is not None:
+                    log_dict["dpp_diversity"] = dpp_value
                 
                 wandb.log(log_dict)
                 
@@ -828,27 +852,34 @@ if __name__ == "__main__":
             print("SliceGAN models saved successfully!")
 
     if args.track:
+        if mmd_values:
+            final_mmd = np.mean(mmd_values[-10:])
+            wandb.log({"mmd": final_mmd, "epoch": args.n_epochs})
+        if dpp_values:
+            final_dpp = np.mean(dpp_values[-10:])
+            wandb.log({"dpp": final_dpp, "epoch": args.n_epochs})
         wandb.finish()
 
     print("SliceGAN training completed!")
     
-    # ---- Export final generated 3D designs for ParaView ----
-    print("Exporting final generated 3D designs for ParaView...")
-    slice_generator.eval()
-    n_export = 8  # Number of designs to export
-    z = th.randn((n_export, args.latent_dim, 1, 1, 1), device=device)
-    all_conditions = th.stack(condition_tensors, dim=1)
-    linspaces = [
-        th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_export, device=device)
-        for i in range(all_conditions.shape[1])
-    ]
-    export_conds = th.stack(linspaces, dim=1)
-    gen_volumes = slice_generator(z, export_conds.reshape(-1, n_conds, 1, 1, 1))
-    gen_volumes_np = gen_volumes.squeeze(1).detach().cpu().numpy()
+    if args.export:
+        # ---- Export final generated 3D designs for ParaView ----
+        print("Exporting final generated 3D designs for ParaView...")
+        slice_generator.eval()
+        n_export = 8  # Number of designs to export
+        z = th.randn((n_export, args.latent_dim, 1, 1, 1), device=device)
+        all_conditions = th.stack(condition_tensors, dim=1)
+        linspaces = [
+            th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_export, device=device)
+            for i in range(all_conditions.shape[1])
+        ]
+        export_conds = th.stack(linspaces, dim=1)
+        gen_volumes = slice_generator(z, export_conds.reshape(-1, n_conds, 1, 1, 1))
+        gen_volumes_np = gen_volumes.squeeze(1).detach().cpu().numpy()
 
-    os.makedirs("paraview_exports", exist_ok=True)
-    for i, vol in enumerate(gen_volumes_np):
-        np.save(f"paraview_exports/slice_gen3d_{i}.npy", vol)
-        # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
+        os.makedirs("paraview_exports", exist_ok=True)
+        for i, vol in enumerate(gen_volumes_np):
+            np.save(f"paraview_exports/slice_gen3d_{i}.npy", vol)
+            # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
 
-    print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
+        print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
