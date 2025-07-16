@@ -16,6 +16,28 @@ As much as we can, we follow the [CleanRL](https://github.com/vwxyzjn/cleanrl) p
 * Logging: we use experiment tracking tools like [Weights & Biases](https://wandb.ai/site) to log the results of our experiments. All our "official" runs are logged in the [EngiOpt project](https://wandb.ai/engibench/engiopt).
 * Reproducibility: we seed all the random number generators, make PyTorch deterministic, report the hyperparameters and code in WandB.
 
+## Implemented algorithms
+
+
+**Algorithm** | **Class** | **Dimensions** | **Conditional?** | **Model**
+--- | --- | --- | --- | ---
+[cgan_1d](engiopt/cgan_1d/) | Inverse Design | 1D | ✅ | GAN MLP
+[cgan_2d](engiopt/cgan_2d/) | Inverse Design | 2D | ✅ | GAN MLP
+[cgan_bezier](engiopt/cgan_bezier/) | Inverse Design | 2D | ✅ | GAN + Bezier layer
+[cgan_cnn_2d](engiopt/cgan_cnn_2d/) | Inverse Design | 2D | ✅ | GAN + CNN
+[diffusion_1d](engiopt/diffusion_1d/) | Inverse Design | 1D | ❌ | Diffusion
+[diffusion_2d_cond](engiopt/diffusion_2d_cond/) | Inverse Design | 2D | ✅ | Diffusion
+[gan_1d](engiopt/gan_1d/) | Inverse Design | 1D | ❌ | GAN MLP
+[gan_2d](engiopt/gan_2d/) | Inverse Design | 2D | ❌ | GAN MLP
+[gan_bezier](engiopt/gan_bezier/) | Inverse Design | 2D | ❌ | GAN + Bezier layer
+[gan_cnn_2d](engiopt/gan_cnn_2d/) | Inverse Design | 2D | ❌ | GAN + CNN
+[surrogate_model](engiopt/surrogate_model/) | Surrogate Model | 1D | ❌ | MLP
+
+## Dashboards
+The integration with WandB allows us to access live dashboards of our runs (on the cluster or not). We also upload the trained models there. You can access some of our runs at https://wandb.ai/engibench/engiopt.
+<img src="imgs/wandb_dashboard.png" alt="WandB dashboards"/>
+
+
 ## Install
 Install EngiOpt dependencies:
 ```
@@ -64,29 +86,6 @@ python engiopt/cgan_cnn_2d/evaluate_cgan_cnn_2d.py --problem-id "beams2d" --wand
 ```
 This will generate 10 designs from the trained model and run some [metrics](https://github.com/IDEALLab/EngiOpt/blob/main/engiopt/metrics.py) on them. This is what we used to generate the results in the paper. This by default will pull the model from wandb. It is possible to restore a model from a local file but is not currently supported.
 
-
-## Implemented algorithms
-
-
-**Algorithm** | **Class** | **Dimensions** | **Conditional?** | **Model**
---- | --- | --- | --- | ---
-[cgan_1d](engiopt/cgan_1d/) | Inverse Design | 1D | ✅ | GAN MLP
-[cgan_2d](engiopt/cgan_2d/) | Inverse Design | 2D | ✅ | GAN MLP
-[cgan_bezier](engiopt/cgan_bezier/) | Inverse Design | 2D | ✅ | GAN + Bezier layer
-[cgan_cnn_2d](engiopt/cgan_cnn_2d/) | Inverse Design | 2D | ✅ | GAN + CNN
-[diffusion_1d](engiopt/diffusion_1d/) | Inverse Design | 1D | ❌ | Diffusion
-[diffusion_2d_cond](engiopt/diffusion_2d_cond/) | Inverse Design | 2D | ✅ | Diffusion
-[gan_1d](engiopt/gan_1d/) | Inverse Design | 1D | ❌ | GAN MLP
-[gan_2d](engiopt/gan_2d/) | Inverse Design | 2D | ❌ | GAN MLP
-[gan_bezier](engiopt/gan_bezier/) | Inverse Design | 2D | ❌ | GAN + Bezier layer
-[gan_cnn_2d](engiopt/gan_cnn_2d/) | Inverse Design | 2D | ❌ | GAN + CNN
-[surrogate_model](engiopt/surrogate_model/) | Surrogate Model | 1D | ❌ | MLP
-
-
-
-## Dashboards
-The integration with WandB allows us to access live dashboards of our runs (on the cluster or not). We also upload the trained models there. You can access some of our runs at https://wandb.ai/engibench/engiopt.
-<img src="imgs/wandb_dashboard.png" alt="WandB dashboards"/>
 
 ## Colab notebooks
 We have some colab notebooks that show how to use some of the EngiBench/EngiOpt features.
