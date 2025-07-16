@@ -636,13 +636,14 @@ if __name__ == "__main__":
 
                 th.save(ckpt_gen, "bezier_generator.pth")
                 th.save(ckpt_disc, "bezier_discriminator.pth")
-                artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
-                artifact_gen.add_file("bezier_generator.pth")
-                artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
-                artifact_disc.add_file("bezier_discriminator.pth")
+                if args.track:
+                    artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
+                    artifact_gen.add_file("bezier_generator.pth")
+                    artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
+                    artifact_disc.add_file("bezier_discriminator.pth")
 
-                wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
-                wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                    wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 
     if args.track:
         wandb.finish()
