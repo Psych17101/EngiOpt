@@ -31,6 +31,58 @@ cd EngiBench/
 pip install -e ".[all]"
 ```
 
+## Running the code
+
+First, if you want to use weights and biases, you need to set the `WANDB_API_KEY` environment variable. You can get your API key from [wandb](https://wandb.ai/site). Then, you can run:
+```
+wandb login
+```
+
+### Inverse design
+Usually, we provide two scripts per algorithm: one to train the model, and one to evaluate it.
+
+To train a model, you can run (for example):
+
+```
+python engiopt/cgan_cnn_2d/cgan_cnn_2d.py --problem-id "beams2d" --track --wandb-entity None --save-model --n-epochs 200 --seed 1
+```
+
+This will run a CGAN 2D using CNN model on the beams2d problem. `--track` will track the run on wandb, `--wandb-entity None` will use the default wandb entity, `--save-model` will save the model, `--n-epochs 200` will run for 200 epochs, and `--seed 1` will set the random seed.
+
+You can always check the help for more options:
+```
+python engiopt/cgan_cnn_2d/cgan_cnn_2d.py -h
+```
+
+There are other available models in the `engiopt/` folder.
+
+Then you can restore a trained model and evaluate it:
+
+```
+python engiopt/cgan_cnn_2d/evaluate_cgan_cnn_2d.py --problem-id "beams2d" --wandb-entity None --seed 1 --n-samples 10
+```
+This will generate 10 designs from the trained model and run some [metrics](https://github.com/IDEALLab/EngiOpt/blob/main/engiopt/metrics.py) on them. This is what we used to generate the results in the paper. This by default will pull the model from wandb. It is possible to restore a model from a local file but is not currently supported.
+
+
+## Implemented algorithms
+
+
+Algorithm | Class | Dimensions | Conditional? | Model |
+|---------|------------|--------------|-------|
+| [cgan_1d](engiopt/cgan_1d/) | Inverse Design | 1D | ✅ | MLP |
+| [cgan_2d](engiopt/cgan_2d/) | Inverse Design | 2D | ✅ | MLP |
+| [cgan_bezier](engiopt/cgan_bezier/) | Inverse Design | 2D | ✅ | MLP + Bezier layer |
+| [cgan_cnn_2d](engiopt/cgan_cnn_2d/) | Inverse Design | 2D | ✅ | CNN |
+| [diffusion_1d](engiopt/diffusion_1d/) | Inverse Design | 1D | ❌ | Diffusion |
+| [diffusion_2d_cond](engiopt/diffusion_2d_cond/) | Inverse Design | 2D | ✅ | Diffusion |
+| [gan_1d](engiopt/gan_1d/) | Inverse Design | 1D | ❌ | GAN |
+| [gan_2d](engiopt/gan_2d/) | Inverse Design | 2D | ❌ | GAN |
+| [gan_bezier](engiopt/gan_bezier/) | Inverse Design | 2D | ❌ | GAN + Bezier layer |
+| [gan_cnn_2d](engiopt/gan_cnn_2d/) | Inverse Design | 2D | ❌ | CNN |
+| [surrogate_model](engiopt/surrogate_model/) | Surrogate Model | 1D | ❌ | MLP |
+
+
+
 ## Dashboards
 The integration with WandB allows us to access live dashboards of our runs (on the cluster or not). We also upload the trained models there. You can access some of our runs at https://wandb.ai/engibench/engiopt.
 <img src="imgs/wandb_dashboard.png" alt="WandB dashboards"/>
