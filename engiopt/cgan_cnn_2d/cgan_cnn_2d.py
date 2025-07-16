@@ -410,12 +410,13 @@ if __name__ == "__main__":
 
                     th.save(ckpt_gen, "generator.pth")
                     th.save(ckpt_disc, "discriminator.pth")
-                    artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
-                    artifact_gen.add_file("generator.pth")
-                    artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
-                    artifact_disc.add_file("discriminator.pth")
+                    if args.track:
+                        artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator", type="model")
+                        artifact_gen.add_file("generator.pth")
+                        artifact_disc = wandb.Artifact(f"{args.problem_id}_{args.algo}_discriminator", type="model")
+                        artifact_disc.add_file("discriminator.pth")
 
-                    wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
-                    wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
+                        wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
+                        wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()
