@@ -68,19 +68,19 @@ This will generate 10 designs from the trained model and run some [metrics](http
 ## Implemented algorithms
 
 
-Algorithm | Class | Dimensions | Conditional? | Model |
-|---------|------------|--------------|-------|
-| [cgan_1d](engiopt/cgan_1d/) | Inverse Design | 1D | ✅ | MLP |
-| [cgan_2d](engiopt/cgan_2d/) | Inverse Design | 2D | ✅ | MLP |
-| [cgan_bezier](engiopt/cgan_bezier/) | Inverse Design | 2D | ✅ | MLP + Bezier layer |
-| [cgan_cnn_2d](engiopt/cgan_cnn_2d/) | Inverse Design | 2D | ✅ | CNN |
-| [diffusion_1d](engiopt/diffusion_1d/) | Inverse Design | 1D | ❌ | Diffusion |
-| [diffusion_2d_cond](engiopt/diffusion_2d_cond/) | Inverse Design | 2D | ✅ | Diffusion |
-| [gan_1d](engiopt/gan_1d/) | Inverse Design | 1D | ❌ | GAN |
-| [gan_2d](engiopt/gan_2d/) | Inverse Design | 2D | ❌ | GAN |
-| [gan_bezier](engiopt/gan_bezier/) | Inverse Design | 2D | ❌ | GAN + Bezier layer |
-| [gan_cnn_2d](engiopt/gan_cnn_2d/) | Inverse Design | 2D | ❌ | CNN |
-| [surrogate_model](engiopt/surrogate_model/) | Surrogate Model | 1D | ❌ | MLP |
+**Algorithm** | **Class** | **Dimensions** | **Conditional?** | **Model**
+--- | --- | --- | --- | ---
+[cgan_1d](engiopt/cgan_1d/) | Inverse Design | 1D | ✅ | GAN MLP
+[cgan_2d](engiopt/cgan_2d/) | Inverse Design | 2D | ✅ | GAN MLP
+[cgan_bezier](engiopt/cgan_bezier/) | Inverse Design | 2D | ✅ | GAN + Bezier layer
+[cgan_cnn_2d](engiopt/cgan_cnn_2d/) | Inverse Design | 2D | ✅ | GAN + CNN
+[diffusion_1d](engiopt/diffusion_1d/) | Inverse Design | 1D | ❌ | Diffusion
+[diffusion_2d_cond](engiopt/diffusion_2d_cond/) | Inverse Design | 2D | ✅ | Diffusion
+[gan_1d](engiopt/gan_1d/) | Inverse Design | 1D | ❌ | GAN MLP
+[gan_2d](engiopt/gan_2d/) | Inverse Design | 2D | ❌ | GAN MLP
+[gan_bezier](engiopt/gan_bezier/) | Inverse Design | 2D | ❌ | GAN + Bezier layer
+[gan_cnn_2d](engiopt/gan_cnn_2d/) | Inverse Design | 2D | ❌ | GAN + CNN
+[surrogate_model](engiopt/surrogate_model/) | Surrogate Model | 1D | ❌ | MLP
 
 
 
