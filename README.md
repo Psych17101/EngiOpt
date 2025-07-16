@@ -23,13 +23,13 @@ As much as we can, we follow the [CleanRL](https://github.com/vwxyzjn/cleanrl) p
 --- | --- | --- | --- | ---
 [cgan_1d](engiopt/cgan_1d/) | Inverse Design | 1D | ✅ | GAN MLP
 [cgan_2d](engiopt/cgan_2d/) | Inverse Design | 2D | ✅ | GAN MLP
-[cgan_bezier](engiopt/cgan_bezier/) | Inverse Design | 2D | ✅ | GAN + Bezier layer
+[cgan_bezier](engiopt/cgan_bezier/) | Inverse Design | 1D | ✅ | GAN + Bezier layer
 [cgan_cnn_2d](engiopt/cgan_cnn_2d/) | Inverse Design | 2D | ✅ | GAN + CNN
 [diffusion_1d](engiopt/diffusion_1d/) | Inverse Design | 1D | ❌ | Diffusion
 [diffusion_2d_cond](engiopt/diffusion_2d_cond/) | Inverse Design | 2D | ✅ | Diffusion
 [gan_1d](engiopt/gan_1d/) | Inverse Design | 1D | ❌ | GAN MLP
 [gan_2d](engiopt/gan_2d/) | Inverse Design | 2D | ❌ | GAN MLP
-[gan_bezier](engiopt/gan_bezier/) | Inverse Design | 2D | ❌ | GAN + Bezier layer
+[gan_bezier](engiopt/gan_bezier/) | Inverse Design | 1D | ❌ | GAN + Bezier layer
 [gan_cnn_2d](engiopt/gan_cnn_2d/) | Inverse Design | 2D | ❌ | GAN + CNN
 [surrogate_model](engiopt/surrogate_model/) | Surrogate Model | 1D | ❌ | MLP
 
