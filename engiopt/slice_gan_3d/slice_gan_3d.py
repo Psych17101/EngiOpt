@@ -11,21 +11,21 @@ from dataclasses import dataclass
 import os
 import random
 import time
+from typing import Optional
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
-from engiopt.metrics import mmd, dpp_diversity
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
-from torch import nn
 from torch import autograd
-from typing import Optional
+from torch import nn
 import torch.nn.functional as F
 import tqdm
 import tyro
-
-
 import wandb
+
+from engiopt.metrics import dpp_diversity
+from engiopt.metrics import mmd
 
 
 @dataclass
@@ -83,13 +83,13 @@ class Args:
 
 
 def extract_random_slices(
-    volumes: th.Tensor, 
-    axis: int, 
-    n_slices: Optional[int] = None, 
+    volumes: th.Tensor,
+    axis: int,
+    n_slices: Optional[int] = None,
     target_size: int = 64
 ) -> tuple[th.Tensor, th.Tensor]:
     """Extract random slices from 3D volumes and resize to consistent dimensions.
-    
+
     Args:
         volumes: (B, C, D, H, W) tensor of 3D volumes
         axis: 0=D, 1=H, 2=W (which spatial dimension to slice along)
@@ -158,7 +158,6 @@ def visualize_3d_designs(
         save_path: Path to save the visualization
         max_designs: Maximum number of designs to visualize
     """
-
     n_designs = min(len(volumes), max_designs)
     volumes = volumes[:n_designs]
     conditions = conditions[:n_designs]
@@ -358,8 +357,7 @@ class SliceDiscriminator2D(nn.Module):
         )
 
     def forward(self, x: th.Tensor, design_conds: th.Tensor, slice_pos: th.Tensor) -> th.Tensor:
-        """
-        Args:
+        """Args:
             x: (B, in_channels, H, W) input slices - can be any size
             design_conds: (B, n_design_conds, 1, 1) design conditions
             slice_pos: (B, 1, 1, 1) normalized slice position
@@ -389,7 +387,6 @@ def compute_gradient_penalty(
 ):
     """Calculates the gradient penalty loss for WGAN GP"""
     import torch as th
-    from torch import autograd
 
     # Random weight term for interpolation between real and fake samples
     alpha = th.rand(real_samples.size(0), 1, 1, 1, device=device)
@@ -516,7 +513,7 @@ if __name__ == "__main__":
     optimizer_generator = th.optim.Adam(slice_generator.parameters(), lr=args.lr_gen, betas=(args.b1, args.b2))
 
     optimizer_discriminators = {}
-    for axis_name in slice_discriminators.keys():
+    for axis_name in slice_discriminators:
         optimizer_discriminators[axis_name] = th.optim.Adam(
             slice_discriminators[axis_name].parameters(), lr=args.lr_disc, betas=(args.b1, args.b2)
         )
@@ -549,12 +546,12 @@ if __name__ == "__main__":
     # -------------
     print("Starting SliceGAN training...")
 
-    last_disc_acc = {axis: 0.0 for axis in slice_discriminators.keys()}  # Track discriminator accuracy per axis
+    last_disc_acc = dict.fromkeys(slice_discriminators.keys(), 0.0)  # Track discriminator accuracy per axis
 
     mmd_sigma = 10.0
     mmd_values = []
     dpp_values = []
-    
+
     real_slices_dict: dict[str, th.Tensor] = {}
     slice_positions_dict: dict[str, th.Tensor] = {}
     slice_conds_dict: dict[str, th.Tensor] = {}
@@ -761,7 +758,7 @@ if __name__ == "__main__":
             if args.track:
                 # Log individual axis losses
                 log_dict = {}
-                for axis_name in slice_discriminators.keys():
+                for axis_name in slice_discriminators:
                     log_dict[f"d_loss_{axis_name}"] = d_losses.get(axis_name, 0)
                     log_dict[f"real_loss_{axis_name}"] = real_losses.get(axis_name, 0)
                     log_dict[f"fake_loss_{axis_name}"] = fake_losses.get(axis_name, 0)
@@ -793,7 +790,7 @@ if __name__ == "__main__":
                     )
 
                     # Print per-axis details
-                    for axis_name in slice_discriminators.keys():
+                    for axis_name in slice_discriminators:
                         if axis_name in d_losses:
                             print(
                                 f"  {axis_name.upper()}: D_loss={d_losses[axis_name]:.4f}, "

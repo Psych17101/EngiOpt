@@ -11,17 +11,18 @@ import random
 import time
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
-from engiopt.metrics import mmd, dpp_diversity
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
+from torch import autograd
 from torch import nn
 import torch.nn.functional as F
-import torch.autograd as autograd
 import tqdm
 import tyro
-
 import wandb
+
+from engiopt.metrics import dpp_diversity
+from engiopt.metrics import mmd
 
 
 @dataclass
