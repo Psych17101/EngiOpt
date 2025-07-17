@@ -83,10 +83,7 @@ class Args:
 
 
 def extract_random_slices(
-    volumes: th.Tensor,
-    axis: int,
-    n_slices: Optional[int] = None,
-    target_size: int = 64
+    volumes: th.Tensor, axis: int, n_slices: Optional[int] = None, target_size: int = 64
 ) -> tuple[th.Tensor, th.Tensor]:
     """Extract random slices from 3D volumes and resize to consistent dimensions.
 
@@ -638,7 +635,9 @@ if __name__ == "__main__":
                         n_slices = max(1, int(args.slice_sampling_rate * designs_3d.shape[4]))  # W
 
                     # Extract slices from real data
-                    real_slices_tensor, real_positions_tensor = extract_random_slices(designs_3d, axis=axis_idx, n_slices=n_slices)
+                    real_slices_tensor, real_positions_tensor = extract_random_slices(
+                        designs_3d, axis=axis_idx, n_slices=n_slices
+                    )
                     real_slice_conds = conds.repeat_interleave(n_slices, dim=0)
 
                     real_slices_dict[axis_name] = real_slices_tensor
@@ -646,7 +645,9 @@ if __name__ == "__main__":
                     slice_conds_dict[axis_name] = real_slice_conds
 
                     # Extract slices from fake data (Line 9)
-                    fake_slices, fake_positions = extract_random_slices(fake_volumes_tensor, axis=axis_idx, n_slices=n_slices)
+                    fake_slices, fake_positions = extract_random_slices(
+                        fake_volumes_tensor, axis=axis_idx, n_slices=n_slices
+                    )
                     fake_slice_conds = conds.repeat_interleave(n_slices, dim=0)
 
                     # Format conditioning for discriminator
@@ -716,7 +717,9 @@ if __name__ == "__main__":
                         n_slices = max(1, int(args.slice_sampling_rate * fake_volumes_tensor.shape[4]))
 
                     # Extract slices from generated volume (Line 21)
-                    fake_slices, fake_positions = extract_random_slices(fake_volumes_tensor, axis=axis_idx, n_slices=n_slices)
+                    fake_slices, fake_positions = extract_random_slices(
+                        fake_volumes_tensor, axis=axis_idx, n_slices=n_slices
+                    )
                     fake_slice_conds = conds.repeat_interleave(n_slices, dim=0)
 
                     # Format conditioning
