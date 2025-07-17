@@ -75,11 +75,10 @@ class Args:
     """Weight for reconstruction loss"""
     
     # Multiview parameters
-    n_views: int = 3
-    """Number of views for multiview rendering"""
     n_slices: int = 9
     """Number of slices to extract from each volume for training"""
 
+    # Training Updates
     gen_iters: int = 1
     """Number of generator updates per batch"""
     discrim_iters: int = 1
