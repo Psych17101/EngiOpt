@@ -53,9 +53,9 @@ class Args:
     """number of epochs of training"""
     batch_size: int = 8
     """size of the batches"""
-    lr_gen: float = 1e-4
+    lr_gen: float = 0.0025
     """learning rate for the generator"""
-    lr_disc: float = 4e-4
+    lr_disc: float = 10e-5
     """learning rate for the discriminator"""
     b1: float = 0.5
     """decay of first order momentum of gradient"""
@@ -69,7 +69,7 @@ class Args:
     """interval between volume samples"""
     
     # SliceGAN specific parameters
-    discrim_iters: int = 3
+    discrim_iters: int = 1
     """Discriminator update"""
     gen_iters: int = 1
     """Generator update"""
@@ -153,6 +153,7 @@ def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_na
         save_path: Path to save the visualization
         max_designs: Maximum number of designs to visualize
     """
+    
     n_designs = min(len(volumes), max_designs)
     volumes = volumes[:n_designs]
     conditions = conditions[:n_designs]
@@ -358,7 +359,6 @@ class SliceDiscriminator2D(nn.Module):
         Returns:
             out: (B, out_channels, 1, 1) real/fake score
         """
-
         # Expand conditions to match image spatial dimensions
         all_conds = th.cat([design_conds, slice_pos], dim=1)  # (B, n_design_conds + 1, 1, 1)
         conds_expanded = all_conds.expand(-1, -1, *x.shape[2:])  # (B, n_design_conds + 1, H, W)
