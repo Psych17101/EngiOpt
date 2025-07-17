@@ -23,6 +23,7 @@ import tyro
 
 import wandb
 
+
 @dataclass
 class Args:
     """Command-line arguments for 3D Multiview VAE-GAN."""
@@ -67,13 +68,13 @@ class Args:
     """dimensionality of the latent space"""
     sample_interval: int = 800
     """interval between volume samples"""
-        
+
     # VAE specific parameters
     kl_weight: float = 0.01
     """Weight for KL divergence loss"""
     recon_weight: float = 1.0
     """Weight for reconstruction loss"""
-    
+
     # Multiview parameters
     n_slices: int = 9
     """Number of slices to extract from each volume for training"""
@@ -85,10 +86,11 @@ class Args:
     """Number of discriminator updates per batch"""
 
 
-def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_names: list, 
-                        save_path: str, max_designs: int = 9):
+def visualize_3d_designs(
+    volumes: th.Tensor, conditions: th.Tensor, condition_names: list, save_path: str, max_designs: int = 9
+):
     """Visualize 3D volumes by showing cross-sectional slices with a red-white heatmap.
-    
+
     Args:
         volumes: (N, 1, D, H, W) tensor of 3D designs
         conditions: (N, n_conds) tensor of conditions
@@ -99,50 +101,56 @@ def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_na
     n_designs = min(len(volumes), max_designs)
     volumes = volumes[:n_designs]
     conditions = conditions[:n_designs]
-    
+
     # Create subplot grid (3 slices per design)
     rows = n_designs
     cols = 3  # XY, XZ, YZ slices
     fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
-    
+
     if rows == 1:
         axes = axes.reshape(1, -1)
-    
+
     for i in range(n_designs):
         vol = volumes[i, 0].cpu().numpy()  # Remove channel dimension
         D, H, W = vol.shape
-        
+
         # Use 'Reds_r' colormap: low=red, high=white
-        cmap = plt.get_cmap('Reds_r')
-        
+        cmap = plt.get_cmap("Reds_r")
+
         # XY slice (middle Z)
-        axes[i, 0].imshow(vol[D//2, :, :], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 0].set_title(f'Design {i+1} - XY slice (z={D//2})')
+        axes[i, 0].imshow(vol[D // 2, :, :], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 0].set_title(f"Design {i + 1} - XY slice (z={D // 2})")
         axes[i, 0].set_xticks([])
         axes[i, 0].set_yticks([])
-        
+
         # XZ slice (middle Y)
-        axes[i, 1].imshow(vol[:, H//2, :], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 1].set_title(f'Design {i+1} - XZ slice (y={H//2})')
+        axes[i, 1].imshow(vol[:, H // 2, :], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 1].set_title(f"Design {i + 1} - XZ slice (y={H // 2})")
         axes[i, 1].set_xticks([])
         axes[i, 1].set_yticks([])
-        
+
         # YZ slice (middle X)
-        axes[i, 2].imshow(vol[:, :, W//2], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 2].set_title(f'Design {i+1} - YZ slice (x={W//2})')
+        axes[i, 2].imshow(vol[:, :, W // 2], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 2].set_title(f"Design {i + 1} - YZ slice (x={W // 2})")
         axes[i, 2].set_xticks([])
         axes[i, 2].set_yticks([])
-        
+
         # Add condition information as text
         cond_text = []
         for j, name in enumerate(condition_names):
             cond_text.append(f"{name}: {conditions[i, j]:.2f}")
-        axes[i, 0].text(0.02, 0.98, '\n'.join(cond_text), 
-                       transform=axes[i, 0].transAxes, fontsize=8,
-                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    
+        axes[i, 0].text(
+            0.02,
+            0.98,
+            "\n".join(cond_text),
+            transform=axes[i, 0].transAxes,
+            fontsize=8,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        )
+
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
 
 
@@ -153,9 +161,13 @@ def reparameterize(mu: th.Tensor, logvar: th.Tensor) -> th.Tensor:
     return mu + eps * std
 
 
-def kl_divergence(mu: th.Tensor, logvar: th.Tensor, ) -> th.Tensor:
+def kl_divergence(
+    mu: th.Tensor,
+    logvar: th.Tensor,
+) -> th.Tensor:
     """Calculate KL divergence for VAE."""
     return -0.5 * th.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
 
 class Encoder(nn.Module):
     """2D Encoder for VAE - processes 2D slices and produces latent mean and log-variance."""
@@ -175,22 +187,18 @@ class Encoder(nn.Module):
             nn.Conv2d(in_channels, num_filters[0], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[0]),
             nn.ReLU(inplace=False),
-
             # 25 → 12
             nn.Conv2d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[1]),
             nn.ReLU(inplace=False),
-
             # 12 → 6
             nn.Conv2d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[2]),
             nn.ReLU(inplace=False),
-
             # 6 → 3
             nn.Conv2d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[3]),
             nn.ReLU(inplace=False),
-
             # 3 → 1
             nn.Conv2d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(num_filters[4]),
@@ -199,7 +207,7 @@ class Encoder(nn.Module):
 
         # Adaptive pooling to handle variable input sizes
         self.adaptive_pool = nn.AdaptiveAvgPool2d((2, 2))
-        
+
         # Calculate flattened dimension after adaptive pooling
         self.flatten_dim = num_filters[4] * 2 * 2
         self.fc_mu = nn.Linear(self.flatten_dim, latent_dim)
@@ -208,15 +216,16 @@ class Encoder(nn.Module):
     def forward(self, x: th.Tensor) -> tuple[th.Tensor, th.Tensor]:
         """Encode input 2D slices to latent distribution parameters."""
         # x should be (B*n_slices, 1, H, W) where H, W are the slice dimensions
-        
+
         h = self.encoder(x)
         # Use adaptive pooling to ensure consistent output size
         h = self.adaptive_pool(h)
         h = h.view(h.size(0), -1)  # Flatten
-        
+
         mu = self.fc_mu(h)
         logvar = self.fc_logvar(h)
         return mu, logvar
+
 
 class Generator3D(nn.Module):
     """3D Conditional GAN generator that outputs volumetric designs.
@@ -241,14 +250,14 @@ class Generator3D(nn.Module):
     ):
         super().__init__()
         self.design_shape = design_shape
-        
+
         # Path for noise z - start with 4x4x4 volume
         self.z_path = nn.Sequential(
             nn.ConvTranspose3d(latent_dim, num_filters[0] // 2, kernel_size=4, stride=1, padding=0, bias=False),
             nn.BatchNorm3d(num_filters[0] // 2),
             nn.ReLU(inplace=True),
         )
-        
+
         # Path for condition c - start with 4x4x4 volume
         self.c_path = nn.Sequential(
             nn.ConvTranspose3d(n_conds, num_filters[0] // 2, kernel_size=4, stride=1, padding=0, bias=False),
@@ -262,22 +271,18 @@ class Generator3D(nn.Module):
             nn.ConvTranspose3d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[1]),
             nn.ReLU(inplace=True),
-            
             # 8x8x8 -> 16x16x16
             nn.ConvTranspose3d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[2]),
             nn.ReLU(inplace=True),
-            
             # 16x16x16 -> 32x32x32
             nn.ConvTranspose3d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[3]),
             nn.ReLU(inplace=True),
-            
             # 32x32x32 -> 64x64x64
             nn.ConvTranspose3d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[4]),
             nn.ReLU(inplace=True),
-            
             # Final conv without changing spatial size
             nn.Conv3d(num_filters[4], out_channels, kernel_size=3, stride=1, padding=1, bias=False),
             nn.Tanh(),  # Output in [-1, 1] range
@@ -293,7 +298,7 @@ class Generator3D(nn.Module):
             out: (B, out_channels, D, H, W) - 3D design
         """
         # Run noise & condition through separate stems
-        z = z.view(z.size(0), z.size(1), 1, 1, 1)           # (B, latent_dim, 1, 1, 1)
+        z = z.view(z.size(0), z.size(1), 1, 1, 1)  # (B, latent_dim, 1, 1, 1)
         c = c.view(c.size(0), c.size(1), 1, 1, 1)  # (B, n_conds, 1, 1, 1)
 
         z_feat = self.z_path(z)  # -> (B, num_filters[0]//2, 4, 4, 4)
@@ -306,7 +311,7 @@ class Generator3D(nn.Module):
         out = self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
 
         # Resize to target shape if needed
-        #if out.shape[2:] != self.design_shape:
+        # if out.shape[2:] != self.design_shape:
         #    out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
 
         return out
@@ -338,7 +343,7 @@ class Discriminator3D(nn.Module):
             nn.Conv3d(in_channels, num_filters[0] // 2, kernel_size=4, stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
         )
-        
+
         # Path for condition (expand to match volume size)
         self.cond_path = nn.Sequential(
             nn.Conv3d(n_conds, num_filters[0] // 2, kernel_size=4, stride=2, padding=1, bias=False),
@@ -351,17 +356,14 @@ class Discriminator3D(nn.Module):
             nn.Conv3d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[1]),
             nn.LeakyReLU(0.2, inplace=True),
-            
             # 16x16x16 -> 8x8x8
             nn.Conv3d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[2]),
             nn.LeakyReLU(0.2, inplace=True),
-            
             # 8x8x8 -> 4x4x4
             nn.Conv3d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[3]),
             nn.LeakyReLU(0.2, inplace=True),
-            
             # 4x4x4 -> 2x2x2
             nn.Conv3d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[4]),
@@ -399,6 +401,7 @@ class Discriminator3D(nn.Module):
         # Final classification
         return self.final_conv(h)  # -> (B, out_channels, 1, 1, 1)
 
+
 def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
     """Calculates the gradient penalty loss for WGAN GP"""
     batch_size = real_samples.size(0)
@@ -417,12 +420,13 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, d
         grad_outputs=fake,
         create_graph=True,
         retain_graph=True,
-        only_inputs=True
+        only_inputs=True,
     )[0]
     gradients = gradients.view(batch_size, -1)
     gradient_norm = gradients.norm(2, dim=1)
     gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
     return gradient_penalty
+
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -435,7 +439,7 @@ if __name__ == "__main__":
     design_shape = problem.design_space.shape
     if len(design_shape) != 3:
         raise ValueError(f"Expected 3D design shape, got {design_shape}")
-    
+
     conditions = problem.conditions
     n_conds = len(conditions)
     condition_names = [cond[0] for cond in conditions]
@@ -443,8 +447,7 @@ if __name__ == "__main__":
     # Setup logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
-        wandb.init(project=args.wandb_project, entity=args.wandb_entity, 
-                  config=vars(args), save_code=True, name=run_name)
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=vars(args), save_code=True, name=run_name)
 
     # Seeding
     th.manual_seed(args.seed)
@@ -461,7 +464,7 @@ if __name__ == "__main__":
         device = th.device("cuda")
     else:
         device = th.device("cpu")
-    
+
     # Enable anomaly detection for debugging
     th.autograd.set_detect_anomaly(True)
 
@@ -474,11 +477,7 @@ if __name__ == "__main__":
 
     # Initialize models
     encoder = Encoder(latent_dim=args.latent_dim)
-    generator = Generator3D(
-        latent_dim=args.latent_dim, 
-        n_conds=n_conds, 
-        design_shape=design_shape
-    )
+    generator = Generator3D(latent_dim=args.latent_dim, n_conds=n_conds, design_shape=design_shape)
     discriminator = Discriminator3D(n_conds)
 
     # Move to device
@@ -497,15 +496,15 @@ if __name__ == "__main__":
 
     # Configure data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    
+
     # Extract 3d designs and conditions
     designs_3d = training_ds["optimal_design"]
     condition_tensors = [training_ds[key] for key in problem.conditions_keys]
-    
+
     training_ds = th.utils.data.TensorDataset(designs_3d, *condition_tensors)
     dataloader = th.utils.data.DataLoader(
-        training_ds, 
-        batch_size=args.batch_size, 
+        training_ds,
+        batch_size=args.batch_size,
         shuffle=True,
     )
 
@@ -519,27 +518,27 @@ if __name__ == "__main__":
         """Sample designs from trained generator."""
         encoder.eval()
         generator.eval()
-        
+
         # Sample noise with proper 5d shape
         z = th.randn((n_designs, args.latent_dim, 1, 1, 1), device=device)
-        
+
         # Create condition grid
         all_conditions = th.stack(condition_tensors, dim=1)
         linspaces = [
-            th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_designs, device=device) 
+            th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_designs, device=device)
             for i in range(all_conditions.shape[1])
         ]
         desired_conds = th.stack(linspaces, dim=1)
-        
+
         gen_volumes = generator(z, desired_conds.reshape(-1, n_conds, 1, 1, 1))
-        
+
         encoder.train()
         generator.train()
         return desired_conds, gen_volumes
 
     # Training loop
     print("Starting 3D VAE-GAN training...")
-    
+
     mmd_sigma = 10.0
     mmd_values = []
     dpp_values = []
@@ -547,40 +546,40 @@ if __name__ == "__main__":
     for epoch in tqdm.trange(args.n_epochs):
         for i, data in enumerate(dataloader):
             # Extract 3D Designs and conditions
-            designs_3d = data[0] # (B,D,H,W)
+            designs_3d = data[0]  # (B,D,H,W)
             original_shape = designs_3d.shape
-            
+
             # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
             if len(original_shape) == 4:
                 designs_3d = designs_3d.unsqueeze(1)  # (B, 1, D, H, W)
-            
+
             condition_data = data[1:]
             conds = th.stack(condition_data, dim=1)
             conds_expanded = conds.reshape(-1, n_conds, 1, 1, 1)
-        
+
             batch_size, _, D, H, W = designs_3d.shape
-            
+
             # --- Extract a subset of XY slices from each volume ---
             n_slices = min(args.n_slices, D)  # You can set n_slices as desired
             slice_indices = th.linspace(0, D - 1, n_slices).long()
             # Result: (B, n_slices, 1, H, W)
             slices = designs_3d[:, :, slice_indices, :, :]  # (B, 1, n_slices, H, W)
-            slices = slices.permute(0, 2, 1, 3, 4)          # (B, n_slices, 1, H, W)
-            slices = slices.reshape(-1, 1, H, W)             # (B*n_slices, 1, H, W)
-            
+            slices = slices.permute(0, 2, 1, 3, 4)  # (B, n_slices, 1, H, W)
+            slices = slices.reshape(-1, 1, H, W)  # (B*n_slices, 1, H, W)
+
             # Pass all slices through encoder
-            mu, logvar = encoder(slices)                 # (B*D, latent_dim)
+            mu, logvar = encoder(slices)  # (B*D, latent_dim)
 
             # Compute mean KL divergence over all slices
             mvkl_loss = kl_divergence(mu, logvar) / mu.size(0)  # mu.size(0) == B*D
 
             # Reshape for aggregation if needed
-            mu = mu.view(batch_size, n_slices, -1)              # (B, n_slices, latent_dim)
-            logvar = logvar.view(batch_size, n_slices, -1)      # (B, n_slices, latent_dim)
+            mu = mu.view(batch_size, n_slices, -1)  # (B, n_slices, latent_dim)
+            logvar = logvar.view(batch_size, n_slices, -1)  # (B, n_slices, latent_dim)
 
             # Average latent vectors for each volume - Mean Pooling
-            mu = mu.mean(dim=1)                          # (B, latent_dim)
-            logvar = logvar.mean(dim=1)                  # (B, latent_dim)
+            mu = mu.mean(dim=1)  # (B, latent_dim)
+            logvar = logvar.mean(dim=1)  # (B, latent_dim)
 
             z_encoded = reparameterize(mu, logvar)
 
@@ -589,12 +588,12 @@ if __name__ == "__main__":
 
             # Reconstruct
             reconstructed = generator(z_encoded, conds)
-            
+
             if reconstructed.shape[2:] == (51, 51, 51):
-                reconstructed = F.pad(reconstructed, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+                reconstructed = F.pad(reconstructed, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
 
             if designs_3d.shape[2:] == (51, 51, 51):
-                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
             designs_3d = designs_3d.to(device)
 
             # VAE losses
@@ -603,12 +602,14 @@ if __name__ == "__main__":
             if original_shape == (51, 51, 51):
                 mask = F.pad(
                     th.ones((batch_size, 1, 51, 51, 51), device=designs_3d.device),
-                    (6, 7, 6, 7, 6, 7), mode='constant', value=0
+                    (6, 7, 6, 7, 6, 7),
+                    mode="constant",
+                    value=0,
                 )
 
             # Compute masked loss
             recon_loss = ((reconstructed - designs_3d) ** 2 * mask).sum() / mask.sum()
-            
+
             # ==================
             # Train Encoder
             # ==================
@@ -625,7 +626,7 @@ if __name__ == "__main__":
                 z_encoded_gen = reparameterize(mu.detach(), logvar.detach())
                 reconstructed_gen = generator(z_encoded_gen, conds)
                 if reconstructed_gen.shape[2:] == (51, 51, 51):
-                    reconstructed_gen = F.pad(reconstructed_gen, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+                    reconstructed_gen = F.pad(reconstructed_gen, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
                 recon_loss_gen = reconstruction_loss(reconstructed_gen, designs_3d)
 
                 # GAN loss for generator
@@ -647,11 +648,13 @@ if __name__ == "__main__":
                 z_random = th.randn((batch_size, args.latent_dim), device=device)
                 fake_designs = generator(z_random, conds)
                 if fake_designs.shape[2:] == (51, 51, 51):
-                    fake_designs = F.pad(fake_designs, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
+                    fake_designs = F.pad(fake_designs, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
                 fake_validity_random = discriminator(fake_designs.detach(), conds_expanded)
                 # Wasserstein loss
                 d_loss = -(real_validity.mean() - (fake_validity.mean() + fake_validity_random.mean()) / 2)
-                gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, reconstructed_gen.detach(), conds_expanded, device)
+                gradient_penalty = compute_gradient_penalty(
+                    discriminator, designs_3d, reconstructed_gen.detach(), conds_expanded, device
+                )
                 d_loss += gradient_penalty
                 d_loss.backward()
                 optimizer_discriminator.step()
@@ -663,7 +666,6 @@ if __name__ == "__main__":
                 fake_rand_acc = (fake_validity_random < 0).float().mean().item()
                 disc_acc = 0.5 * (fake_acc + fake_rand_acc)
 
-            
             # After reconstructed and designs_3d are available and on CPU:
             mmd_value = None
             dpp_value = None
@@ -675,18 +677,18 @@ if __name__ == "__main__":
                 try:
                     mmd_value = float(mmd_value)
                 except (ValueError, TypeError):
-                    mmd_value = float('nan')
-                
+                    mmd_value = float("nan")
+
                 if mmd_value is not None:
                     mmd_values.append(mmd_value)
                 if dpp_value is not None:
                     dpp_values.append(dpp_value)
-                    
+
             # ----------
             #  Logging
             # ----------
             batches_done = epoch * len(dataloader) + i
-            
+
             if args.track:
                 log_dict = {
                     "E_loss": E_loss.item(),
@@ -702,64 +704,63 @@ if __name__ == "__main__":
                     "epoch": epoch,
                     "batch": batches_done,
                 }
-                
+
                 if mmd_value is not None:
                     log_dict["mmd"] = mmd_value
                 if dpp_value is not None:
                     log_dict["dpp_diversity"] = dpp_value
-                        
+
                 wandb.log(log_dict)
-                
+
                 if i % 10 == 0:
-                    print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
-                          f"[E loss: {E_loss.item():.4f}] [D loss: {d_loss.item():.4f}] "
-                          f"[Recon: {recon_loss.item():.4f}] [KL: {mvkl_loss.item():.4f}]")
+                    print(
+                        f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
+                        f"[E loss: {E_loss.item():.4f}] [D loss: {d_loss.item():.4f}] "
+                        f"[Recon: {recon_loss.item():.4f}] [KL: {mvkl_loss.item():.4f}]"
+                    )
 
                 if batches_done % args.sample_interval == 0:
                     print("Generating 3D design samples...")
-                    
+
                     desired_conds, volumes_3d = sample_3d_designs(9)
-                    
+
                     img_fname = f"images_3d/{batches_done}.png"
-                    visualize_3d_designs(
-                        volumes_3d, desired_conds, condition_names, 
-                        img_fname, max_designs=9
-                    )
-                    
-                    wandb.log({
-                        "3d_designs": wandb.Image(img_fname),
-                        "sample_step": batches_done
-                    })
+                    visualize_3d_designs(volumes_3d, desired_conds, condition_names, img_fname, max_designs=9)
+
+                    wandb.log({"3d_designs": wandb.Image(img_fname), "sample_step": batches_done})
 
             # Memory cleanup
             if i % 50 == 0:
-                th.cuda.empty_cache() if device.type == 'cuda' else None
+                th.cuda.empty_cache() if device.type == "cuda" else None
 
         # -------------
         # Save models
         # -------------
         if args.save_model and epoch == args.n_epochs - 1:
             print("Saving VAE models...")
-            
+
             # Save all three models
-            th.save({
-                "epoch": epoch,
-                "encoder": encoder.state_dict(),
-                "generator": generator.state_dict(),
-                "discriminator": discriminator.state_dict(),
-                "optimizer_encoder": optimizer_encoder.state_dict(),
-                "optimizer_generator": optimizer_generator.state_dict(),
-                "optimizer_discriminator": optimizer_discriminator.state_dict(),
-                "args": vars(args),
-                "design_shape": design_shape,
-                "n_conds": n_conds,
-            }, "multiview_3d_vaegan.pth")
-            
+            th.save(
+                {
+                    "epoch": epoch,
+                    "encoder": encoder.state_dict(),
+                    "generator": generator.state_dict(),
+                    "discriminator": discriminator.state_dict(),
+                    "optimizer_encoder": optimizer_encoder.state_dict(),
+                    "optimizer_generator": optimizer_generator.state_dict(),
+                    "optimizer_discriminator": optimizer_discriminator.state_dict(),
+                    "args": vars(args),
+                    "design_shape": design_shape,
+                    "n_conds": n_conds,
+                },
+                "multiview_3d_vaegan.pth",
+            )
+
             if args.track:
                 artifact = wandb.Artifact(f"{args.problem_id}_{args.algo}_models", type="model")
                 artifact.add_file("multiview_3d_vaegan.pth")
                 wandb.log_artifact(artifact, aliases=[f"seed_{args.seed}"])
-            
+
             print("3D vae models saved successfully!")
 
     if args.track:
@@ -770,9 +771,9 @@ if __name__ == "__main__":
             final_dpp = np.mean(dpp_values[-10:])
             wandb.log({"dpp": final_dpp, "epoch": args.n_epochs})
         wandb.finish()
-    
+
     print("Multiview 3D VAE-GAN training completed!")
-    
+
     if args.export:
         # ---- Export final generated 3D designs for ParaView ----
         print("Exporting final generated 3D designs for ParaView...")

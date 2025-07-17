@@ -24,6 +24,7 @@ import tyro
 
 import wandb
 
+
 @dataclass
 class Args:
     """Command-line arguments for 3D cDCGAN."""
@@ -71,10 +72,12 @@ class Args:
     discrim_iters: int = 1
     """Number of discriminator updates per batch"""
 
-def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_names: list, 
-                        save_path: str, max_designs: int = 9):
+
+def visualize_3d_designs(
+    volumes: th.Tensor, conditions: th.Tensor, condition_names: list, save_path: str, max_designs: int = 9
+):
     """Visualize 3D volumes by showing cross-sectional slices with a red-white heatmap.
-    
+
     Args:
         volumes: (N, 1, D, H, W) tensor of 3D designs
         conditions: (N, n_conds) tensor of conditions
@@ -85,52 +88,59 @@ def visualize_3d_designs(volumes: th.Tensor, conditions: th.Tensor, condition_na
     n_designs = min(len(volumes), max_designs)
     volumes = volumes[:n_designs]
     conditions = conditions[:n_designs]
-    
+
     # Create subplot grid (3 slices per design)
     rows = n_designs
     cols = 3  # XY, XZ, YZ slices
     fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
-    
+
     if rows == 1:
         axes = axes.reshape(1, -1)
-    
+
     for i in range(n_designs):
         vol = volumes[i, 0].cpu().numpy()  # Remove channel dimension
         D, H, W = vol.shape
-        
+
         # Use 'Reds_r' colormap: low=red, high=white
-        cmap = plt.get_cmap('Reds_r')
-        
+        cmap = plt.get_cmap("Reds_r")
+
         # XY slice (middle Z)
-        axes[i, 0].imshow(vol[D//2, :, :], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 0].set_title(f'Design {i+1} - XY slice (z={D//2})')
+        axes[i, 0].imshow(vol[D // 2, :, :], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 0].set_title(f"Design {i + 1} - XY slice (z={D // 2})")
         axes[i, 0].set_xticks([])
         axes[i, 0].set_yticks([])
-        
+
         # XZ slice (middle Y)
-        axes[i, 1].imshow(vol[:, H//2, :], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 1].set_title(f'Design {i+1} - XZ slice (y={H//2})')
+        axes[i, 1].imshow(vol[:, H // 2, :], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 1].set_title(f"Design {i + 1} - XZ slice (y={H // 2})")
         axes[i, 1].set_xticks([])
         axes[i, 1].set_yticks([])
-        
+
         # YZ slice (middle X)
-        axes[i, 2].imshow(vol[:, :, W//2], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 2].set_title(f'Design {i+1} - YZ slice (x={W//2})')
+        axes[i, 2].imshow(vol[:, :, W // 2], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 2].set_title(f"Design {i + 1} - YZ slice (x={W // 2})")
         axes[i, 2].set_xticks([])
         axes[i, 2].set_yticks([])
-        
+
         # Add condition information as text
         cond_text = []
         for j, name in enumerate(condition_names):
             cond_text.append(f"{name}: {conditions[i, j]:.2f}")
-        axes[i, 0].text(0.02, 0.98, '\n'.join(cond_text), 
-                       transform=axes[i, 0].transAxes, fontsize=8,
-                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    
+        axes[i, 0].text(
+            0.02,
+            0.98,
+            "\n".join(cond_text),
+            transform=axes[i, 0].transAxes,
+            fontsize=8,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        )
+
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
-    
+
+
 class Generator3D(nn.Module):
     """3D Conditional GAN generator that outputs volumetric designs.
 
@@ -154,14 +164,14 @@ class Generator3D(nn.Module):
     ):
         super().__init__()
         self.design_shape = design_shape
-        
+
         # Path for noise z - start with 4x4x4 volume
         self.z_path = nn.Sequential(
             nn.ConvTranspose3d(latent_dim, num_filters[0] // 2, kernel_size=4, stride=1, padding=0, bias=False),
             nn.BatchNorm3d(num_filters[0] // 2),
             nn.ReLU(inplace=True),
         )
-        
+
         # Path for condition c - start with 4x4x4 volume
         self.c_path = nn.Sequential(
             nn.ConvTranspose3d(n_conds, num_filters[0] // 2, kernel_size=4, stride=1, padding=0, bias=False),
@@ -175,22 +185,18 @@ class Generator3D(nn.Module):
             nn.ConvTranspose3d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[1]),
             nn.ReLU(inplace=True),
-            
             # 8x8x8 -> 16x16x16
             nn.ConvTranspose3d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[2]),
             nn.ReLU(inplace=True),
-            
             # 16x16x16 -> 32x32x32
             nn.ConvTranspose3d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[3]),
             nn.ReLU(inplace=True),
-            
             # 32x32x32 -> 64x64x64
             nn.ConvTranspose3d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[4]),
             nn.ReLU(inplace=True),
-            
             # Final conv without changing spatial size
             nn.Conv3d(num_filters[4], out_channels, kernel_size=3, stride=1, padding=1, bias=False),
             nn.Tanh(),  # Output in [-1, 1] range
@@ -206,10 +212,9 @@ class Generator3D(nn.Module):
             out: (B, out_channels, D, H, W) - 3D design
         """
         # Run noise & condition through separate stems
-        z = z.view(z.size(0), z.size(1), 1, 1, 1)           # (B, latent_dim, 1, 1, 1)
+        z = z.view(z.size(0), z.size(1), 1, 1, 1)  # (B, latent_dim, 1, 1, 1)
         c = c.view(c.size(0), c.size(1), 1, 1, 1)  # (B, n_conds, 1, 1, 1)
 
-        
         z_feat = self.z_path(z)  # -> (B, num_filters[0]//2, 4, 4, 4)
         c_feat = self.c_path(c)  # -> (B, num_filters[0]//2, 4, 4, 4)
 
@@ -220,7 +225,7 @@ class Generator3D(nn.Module):
         out = self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
 
         # Resize to target shape if needed
-        #if out.shape[2:] != self.design_shape:
+        # if out.shape[2:] != self.design_shape:
         #    out = .interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
 
         return out
@@ -252,7 +257,7 @@ class Discriminator3D(nn.Module):
             nn.Conv3d(in_channels, num_filters[0] // 2, kernel_size=4, stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
         )
-        
+
         # Path for condition (expand to match volume size)
         self.cond_path = nn.Sequential(
             nn.Conv3d(n_conds, num_filters[0] // 2, kernel_size=4, stride=2, padding=1, bias=False),
@@ -265,17 +270,14 @@ class Discriminator3D(nn.Module):
             nn.Conv3d(num_filters[0], num_filters[1], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[1]),
             nn.LeakyReLU(0.2, inplace=True),
-            
             # 16x16x16 -> 8x8x8
             nn.Conv3d(num_filters[1], num_filters[2], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[2]),
             nn.LeakyReLU(0.2, inplace=True),
-            
             # 8x8x8 -> 4x4x4
             nn.Conv3d(num_filters[2], num_filters[3], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[3]),
             nn.LeakyReLU(0.2, inplace=True),
-            
             # 4x4x4 -> 2x2x2
             nn.Conv3d(num_filters[3], num_filters[4], kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm3d(num_filters[4]),
@@ -313,6 +315,7 @@ class Discriminator3D(nn.Module):
         # Final classification
         return self.final_conv(h)  # -> (B, out_channels, 1, 1, 1)
 
+
 def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
     """Calculates the gradient penalty loss for WGAN GP"""
     batch_size = real_samples.size(0)
@@ -331,12 +334,13 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, d
         grad_outputs=fake,
         create_graph=True,
         retain_graph=True,
-        only_inputs=True
+        only_inputs=True,
     )[0]
     gradients = gradients.view(batch_size, -1)
     gradient_norm = gradients.norm(2, dim=1)
     gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
     return gradient_penalty
+
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -349,7 +353,7 @@ if __name__ == "__main__":
     design_shape = problem.design_space.shape  # Should be (D, H, W) for 3D
     if len(design_shape) != 3:
         raise ValueError(f"Expected 3D design shape, got {design_shape}")
-    
+
     conditions = problem.conditions
     n_conds = len(conditions)
     condition_names = [cond[0] for cond in conditions]
@@ -357,8 +361,7 @@ if __name__ == "__main__":
     # Logging
     run_name = f"{args.problem_id}__{args.algo}__{args.seed}__{int(time.time())}"
     if args.track:
-        wandb.init(project=args.wandb_project, entity=args.wandb_entity, 
-                config=vars(args), save_code=True, name=run_name)
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=vars(args), save_code=True, name=run_name)
 
     # Seeding
     th.manual_seed(args.seed)
@@ -383,12 +386,8 @@ if __name__ == "__main__":
     # Loss function
     adversarial_loss = th.nn.BCELoss()
 
-    generator = Generator3D(
-        latent_dim=args.latent_dim, 
-        n_conds=n_conds, 
-        design_shape=design_shape
-    )
-    
+    generator = Generator3D(latent_dim=args.latent_dim, n_conds=n_conds, design_shape=design_shape)
+
     discriminator = Discriminator3D(n_conds)
 
     generator.to(device)
@@ -403,11 +402,11 @@ if __name__ == "__main__":
 
     # Configure 3D data loader
     training_ds = problem.dataset.with_format("torch", device=device)["train"]
-    
+
     # Extract 3D designs and conditions
     designs_3d = training_ds["optimal_design"]  # Should be (N, D, H, W)
     condition_tensors = [training_ds[key] for key in problem.conditions_keys]
-    
+
     training_ds = th.utils.data.TensorDataset(designs_3d, *condition_tensors)
     dataloader = th.utils.data.DataLoader(
         training_ds,
@@ -423,22 +422,22 @@ if __name__ == "__main__":
     def sample_3d_designs(n_designs: int) -> tuple[th.Tensor, th.Tensor]:
         """Sample n_designs 3D volumes from the generator."""
         generator.eval()
-        
+
         # Sample noise with proper 5D shape
         z = th.randn((n_designs, args.latent_dim, 1, 1, 1), device=device, dtype=th.float)
 
         # Create condition grid
         all_conditions = th.stack(condition_tensors, dim=1)
         linspaces = [
-            th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_designs, device=device) 
+            th.linspace(all_conditions[:, i].min(), all_conditions[:, i].max(), n_designs, device=device)
             for i in range(all_conditions.shape[1])
         ]
 
         desired_conds = th.stack(linspaces, dim=1)
-        
+
         # Generate 3D volumes
         gen_volumes = generator(z, desired_conds.reshape(-1, n_conds, 1, 1, 1))
-        
+
         generator.train()
         return desired_conds, gen_volumes
 
@@ -446,7 +445,7 @@ if __name__ == "__main__":
     #  Training
     # ----------
     print("Starting 3D GAN training...")
-    
+
     g_loss_history = []
     d_loss_history = []
     mmd_sigma = 10.0  # You can adjust this
@@ -459,25 +458,25 @@ if __name__ == "__main__":
         for i, data in enumerate(dataloader):
             # Extract 3D designs and conditions
             designs_3d = data[0]  # (B, D, H, W) - should be (B, 51, 51, 51)
-            
+
             # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
             if len(designs_3d.shape) == 4:
                 designs_3d = designs_3d.unsqueeze(1)  # (B, 1, D, H, W)
-            
+
             # Pad to (B, 1, 64, 64, 64) if needed
             if designs_3d.shape[2:] == (51, 51, 51):
-                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode='constant', value=0)
-                
+                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
+
             condition_data = data[1:]  # List of condition tensors
             # Stack conditions and reshape for 3D: (B, n_conds, 1, 1, 1)
             conds = th.stack(condition_data, dim=1).reshape(-1, n_conds, 1, 1, 1)
 
             # Move data to device
             designs_3d = designs_3d.to(device)
-            conds = conds.to(device)  
-            
-            batch_size = designs_3d.size(0) 
-                    
+            conds = conds.to(device)
+
+            batch_size = designs_3d.size(0)
+
             # -----------------
             #  Sample noise and generate fake 3D designs
             # -----------------
@@ -502,7 +501,9 @@ if __name__ == "__main__":
                 real_validity = discriminator(designs_3d, conds)
                 fake_validity = discriminator(fake_designs_3d.detach(), conds)
                 d_loss = -real_validity.mean() + fake_validity.mean()
-                gradient_penalty = compute_gradient_penalty(discriminator, designs_3d, fake_designs_3d.detach(), conds, device)
+                gradient_penalty = compute_gradient_penalty(
+                    discriminator, designs_3d, fake_designs_3d.detach(), conds, device
+                )
                 d_loss += gradient_penalty
                 d_loss.backward()
                 optimizer_discriminator.step()
@@ -536,14 +537,13 @@ if __name__ == "__main__":
                 try:
                     mmd_value = float(mmd_value)
                 except (ValueError, TypeError):
-                    mmd_value = float('nan')  # or some default numeric value
-                
+                    mmd_value = float("nan")  # or some default numeric value
+
                 if mmd_value is not None:
                     mmd_values.append(mmd_value)
-                
+
                 if dpp_value is not None:
                     dpp_values.append(dpp_value)
-            
 
             # ----------
             #  Logging
@@ -563,49 +563,45 @@ if __name__ == "__main__":
                     "epoch": epoch,
                     "batch": batches_done,
                 }
-                
+
                 if mmd_value is not None:
                     log_dict["mmd"] = mmd_value
                 if dpp_value is not None:
                     log_dict["dpp_diversity"] = dpp_value
 
                 wandb.log(log_dict)
-                
+
                 if i % 10 == 0:  # Print less frequently due to 3D complexity
-                    print(f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
-                        f"[D loss: {d_loss.item():.4f}] [G loss: {g_loss.item():.4f}]")
+                    print(
+                        f"[Epoch {epoch}/{args.n_epochs}] [Batch {i}/{len(dataloader)}] "
+                        f"[D loss: {d_loss.item():.4f}] [G loss: {g_loss.item():.4f}]"
+                    )
 
                 # Sample and visualize 3D designs
                 if batches_done % args.sample_interval == 0:
                     print("Generating 3D design samples...")
-                    
+
                     # Generate fewer samples due to 3D visualization complexity
                     desired_conds, volumes_3d = sample_3d_designs(9)
-                    
+
                     # Create 3D visualization
                     img_fname = f"images_3d/{batches_done}.png"
-                    visualize_3d_designs(
-                        volumes_3d, desired_conds, condition_names, 
-                        img_fname, max_designs=9
-                    )
-                    
+                    visualize_3d_designs(volumes_3d, desired_conds, condition_names, img_fname, max_designs=9)
+
                     # Log to wandb
-                    wandb.log({
-                        "3d_designs": wandb.Image(img_fname),
-                        "sample_step": batches_done
-                    })
-                    
+                    wandb.log({"3d_designs": wandb.Image(img_fname), "sample_step": batches_done})
+
                     print(f"3D design samples saved to {img_fname}")
 
             # Clean up GPU memory periodically
             if i % 50 == 0:
-                th.cuda.empty_cache() if device.type == 'cuda' else None
+                th.cuda.empty_cache() if device.type == "cuda" else None
         # --------------
         #  Save models
         # --------------
         if args.save_model and epoch == args.n_epochs - 1:
             print("Saving 3D models...")
-            
+
             ckpt_gen = {
                 "epoch": epoch,
                 "batches_done": epoch * len(dataloader) + len(dataloader) - 1,
@@ -614,7 +610,7 @@ if __name__ == "__main__":
                 "loss": g_loss.item(),
                 "design_shape": design_shape,
                 "n_conds": n_conds,
-                "args": vars(args)
+                "args": vars(args),
             }
             ckpt_disc = {
                 "epoch": epoch,
@@ -624,12 +620,12 @@ if __name__ == "__main__":
                 "loss": d_loss.item(),
                 "design_shape": design_shape,
                 "n_conds": n_conds,
-                "args": vars(args)
+                "args": vars(args),
             }
 
             th.save(ckpt_gen, "generator_3d.pth")
             th.save(ckpt_disc, "discriminator_3d.pth")
-            
+
             if args.track:
                 artifact_gen = wandb.Artifact(f"{args.problem_id}_{args.algo}_generator_3d", type="model")
                 artifact_gen.add_file("generator_3d.pth")
@@ -638,7 +634,7 @@ if __name__ == "__main__":
 
                 wandb.log_artifact(artifact_gen, aliases=[f"seed_{args.seed}"])
                 wandb.log_artifact(artifact_disc, aliases=[f"seed_{args.seed}"])
-            
+
             print("3D models saved successfully!")
 
     if args.track:
@@ -649,7 +645,7 @@ if __name__ == "__main__":
             final_dpp = np.mean(dpp_values[-10:])
             wandb.log({"dpp": final_dpp, "epoch": args.n_epochs})
         wandb.finish()
-    
+
     print("3D GAN training completed!")
     if args.export:
         # ---- Export final generated 3D designs for ParaView ----
@@ -672,4 +668,3 @@ if __name__ == "__main__":
             # Optionally: save as .vti using pyvista or pyevtk if you want native VTK format
 
         print(f"Saved {n_export} generated 3D designs to paraview_exports/ as .npy files.")
-

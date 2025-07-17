@@ -69,7 +69,9 @@ if __name__ == "__main__":
 
     # Restores the pytorch model from wandb
     if args.wandb_entity is not None:
-        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_slice_gan_3d_generator_slice_gan_3d:seed_{seed}"
+        artifact_path = (
+            f"{args.wandb_entity}/{args.wandb_project}/{args.problem_id}_slice_gan_3d_generator_slice_gan_3d:seed_{seed}"
+        )
     else:
         artifact_path = f"{args.wandb_project}/{args.problem_id}_slice_gan_3d_generator_slice_gan_3d:seed_{seed}"
 
@@ -98,19 +100,16 @@ if __name__ == "__main__":
     model.to(device)
 
     # Sample noise as generator input
-    z = th.randn((args.n_samples, run.config["latent_dim"],1, 1, 1), device=device, dtype=th.float)
+    z = th.randn((args.n_samples, run.config["latent_dim"], 1, 1, 1), device=device, dtype=th.float)
 
     # Generate a batch of designs
     gen_designs = model(z, conditions_tensor)
     print("gen_designs.shape:", gen_designs.shape)
     gen_designs_np = gen_designs.squeeze(1).detach().cpu().numpy()
     crop_start = (64 - 51) // 2  # 6
-    crop_end = crop_start + 51   # 6 + 51 = 57
+    crop_end = crop_start + 51  # 6 + 51 = 57
 
-    gen_designs_np = gen_designs_np[:, 
-                                crop_start:crop_end, 
-                                crop_start:crop_end, 
-                                crop_start:crop_end]
+    gen_designs_np = gen_designs_np[:, crop_start:crop_end, crop_start:crop_end, crop_start:crop_end]
 
     # Clip to boundaries for running THIS IS PROBLEM DEPENDENT
     gen_designs_np = np.clip(gen_designs_np, 1e-3, 1)
