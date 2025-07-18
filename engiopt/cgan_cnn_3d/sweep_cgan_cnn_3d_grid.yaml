@@ -1,7 +1,7 @@
 method: grid
 metric:
   name: dpp
-  goal: minimize
+  goal: maximize
 parameters:
   algo:
     values:

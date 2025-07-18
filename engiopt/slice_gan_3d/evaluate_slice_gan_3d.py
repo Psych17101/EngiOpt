@@ -25,7 +25,7 @@ class Args:
     """Problem identifier."""
     seed: int = 1
     """Random seed to run."""
-    wandb_project: str = "engiopt_slicegan"
+    wandb_project: str = "engiopt"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
@@ -106,6 +106,7 @@ if __name__ == "__main__":
     gen_designs = model(z, conditions_tensor)
     print("gen_designs.shape:", gen_designs.shape)
     gen_designs_np = gen_designs.squeeze(1).detach().cpu().numpy()
+    # Removal of Padding
     crop_start = (64 - 51) // 2  # 6
     crop_end = crop_start + 51  # 6 + 51 = 57
 

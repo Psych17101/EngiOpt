@@ -1,5 +1,6 @@
 """3D cDCGAN Main Script - Extended from the original 2D implementation.
 
+Created by Christophe Hatterer
 Based on https://github.com/togheppi/cDCGAN/tree/master.
 Extended to handle 3D volumetric engineering designs.
 """
@@ -40,7 +41,7 @@ class Args:
     # Tracking
     track: bool = True
     """Track the experiment with wandb."""
-    wandb_project: str = "engiopt_3d"
+    wandb_project: str = "engiopt"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
@@ -72,6 +73,11 @@ class Args:
     """Number of generator updates per batch"""
     discrim_iters: int = 1
     """Number of discriminator updates per batch"""
+    # metrics
+    mmd_sigma = 10.0
+    """Sigma value for MMD calculations"""
+    dpp_sigma = 10.0
+    """Sigma value for DPP Calculations"""
 
 
 def visualize_3d_designs(
@@ -202,16 +208,16 @@ class Generator3D(nn.Module):
             nn.ReLU(inplace=True),
             # Final conv without changing spatial size
             nn.Conv3d(num_filters[4], out_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.Tanh(),  # Output in [-1, 1] range
+            nn.Sigmoid(),  # Output in [0, 1] range
         )
 
     def forward(self, z: th.Tensor, c: th.Tensor) -> th.Tensor:
         """Forward pass for the 3D Generator.
 
-        Inputs:
+        Args:
             z: (B, z_dim, 1, 1, 1) - noise vector
             c: (B, cond_features, 1, 1, 1) - condition vector
-        Output:
+        Returns:
             out: (B, out_channels, D, H, W) - 3D design
         """
         # Run noise & condition through separate stems
@@ -226,11 +232,6 @@ class Generator3D(nn.Module):
 
         # Upsample through the main blocks
         return self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
-
-        # Resize to target shape if needed
-        # if out.shape[2:] != self.design_shape:
-        #    out = .interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
-
 
 
 class Discriminator3D(nn.Module):
@@ -296,10 +297,10 @@ class Discriminator3D(nn.Module):
     def forward(self, x: th.Tensor, c: th.Tensor) -> th.Tensor:
         """Forward pass for the 3D Discriminator.
 
-        Inputs:
+        Args:
             x: (B, in_channels, D, H, W) - 3D design volume
             c: (B, cond_features, 1, 1, 1) - condition vector
-        Output:
+        Returns:
             out: (B, out_channels, 1, 1, 1) - real/fake score
         """
         # Expand conditions to match volume spatial dimensions
@@ -451,7 +452,6 @@ if __name__ == "__main__":
 
     g_loss_history = []
     d_loss_history = []
-    mmd_sigma = 10.0  # You can adjust this
 
     last_disc_acc = 0.0  # Track discriminator accuracy
     mmd_values = []  # At the top of your training loop
@@ -536,8 +536,8 @@ if __name__ == "__main__":
                 # Use a small batch for metrics to save memory
                 gen_np = fake_designs_3d.detach().cpu().numpy().reshape(fake_designs_3d.size(0), -1)
                 real_np = designs_3d.detach().cpu().numpy().reshape(designs_3d.size(0), -1)
-                mmd_value = mmd(gen_np, real_np, sigma=mmd_sigma)
-                dpp_value = dpp_diversity(gen_np, sigma=mmd_sigma)
+                mmd_value = mmd(gen_np, real_np, sigma=args.mmd_sigma)
+                dpp_value = dpp_diversity(gen_np, sigma=args.dpp_sigma)
                 # If mmd is a string like "0.1234" or "NaN", convert or handle it
                 try:
                     mmd_value = float(mmd_value)

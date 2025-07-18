@@ -1,5 +1,6 @@
 """3D SliceGAN Main Script - Generate 3D volumes by learning 2D slice distributions.
 
+Created by Christophe Hatterer
 Based on SliceGAN: https://arxiv.org/abs/2102.07708
 Extended from the original cDCGAN framework to handle 3D volumetric engineering designs
 through 2D slice generation.
@@ -46,7 +47,7 @@ class Args:
     # Tracking
     track: bool = True
     """Track the experiment with wandb."""
-    wandb_project: str = "engiopt_slicegan"
+    wandb_project: str = "engiopt"
     """Wandb project name."""
     wandb_entity: str | None = None
     """Wandb entity name."""
@@ -85,10 +86,14 @@ class Args:
     use_all_axes: bool = True
     """Use slices from all three axes (XY, XZ, YZ)"""
 
+    # metrics
+    mmd_sigma = 10.0
+    """Sigma value for MMD calculations"""
+    dpp_sigma = 10.0
+    """Sigma value for DPP Calculations"""
 
-def extract_random_slices(
-    volumes: th.Tensor, axis: int, n_slices: int | None = None
-) -> tuple[th.Tensor, th.Tensor]:
+
+def extract_random_slices(volumes: th.Tensor, axis: int, n_slices: int | None = None) -> tuple[th.Tensor, th.Tensor]:
     """Extract random slices from 3D volumes and resize to consistent dimensions.
 
     Args:
@@ -273,16 +278,17 @@ class SliceGenerator3D(nn.Module):
             nn.ReLU(inplace=True),
             # Final conv without changing spatial size
             nn.Conv3d(num_filters[4], out_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.Tanh(),  # Output in [-1, 1] range
+            nn.Sigmoid(),  # Output in [0, 1] range
         )
 
     def forward(self, z: th.Tensor, c: th.Tensor) -> th.Tensor:
         """Forward pass for the 3D Generator.
 
-        Inputs:
+        Args:
             z: (B, z_dim, 1, 1, 1) - noise vector
             c: (B, cond_features, 1, 1, 1) - condition vector
-        Output:
+
+        Returns:
             out: (B, out_channels, D, H, W) - 3D design
         """
         # Run noise & condition through separate stems
@@ -297,6 +303,7 @@ class SliceGenerator3D(nn.Module):
 
         # Upsample through the main blocks
         return self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
+
 
 class SliceDiscriminator2D(nn.Module):
     """2D Discriminator for slice classification with automatic resizing.
@@ -508,9 +515,7 @@ if __name__ == "__main__":
 
     optimizer_discriminators = {}
     for axis_name, disc in slice_discriminators.items():
-        optimizer_discriminators[axis_name] = th.optim.Adam(
-            disc.parameters(), lr=args.lr_disc, betas=(args.b1, args.b2)
-        )
+        optimizer_discriminators[axis_name] = th.optim.Adam(disc.parameters(), lr=args.lr_disc, betas=(args.b1, args.b2))
 
     @th.no_grad()
     def sample_3d_designs(n_designs: int) -> tuple[th.Tensor, th.Tensor]:
@@ -542,7 +547,6 @@ if __name__ == "__main__":
 
     last_disc_acc = dict.fromkeys(slice_discriminators.keys(), 0.0)  # Track discriminator accuracy per axis
 
-    mmd_sigma = 10.0
     mmd_values = []
     dpp_values = []
 
@@ -619,7 +623,9 @@ if __name__ == "__main__":
                     fake_volumes: dict[str, th.Tensor] = {"generated": fake_volumes_tensor}
 
                     if fake_volumes_tensor.shape[2:] == (51, 51, 51):
-                        fake_volumes_tensor = functional.pad(fake_volumes_tensor, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
+                        fake_volumes_tensor = functional.pad(
+                            fake_volumes_tensor, (6, 7, 6, 7, 6, 7), mode="constant", value=0
+                        )
 
                     axis_idx = {"xy": 0, "xz": 1, "yz": 2}[axis_name]
 
@@ -739,8 +745,8 @@ if __name__ == "__main__":
             if i % 100 == 0:
                 gen_np = fake_volumes_tensor.detach().cpu().numpy().reshape(fake_volumes_tensor.size(0), -1)
                 real_np = designs_3d.detach().cpu().numpy().reshape(designs_3d.size(0), -1)
-                mmd_value = mmd(gen_np, real_np, sigma=mmd_sigma)
-                dpp_value = dpp_diversity(gen_np, sigma=mmd_sigma)
+                mmd_value = mmd(gen_np, real_np, sigma=args.mmd_sigma)
+                dpp_value = dpp_diversity(gen_np, sigma=args.dpp_sigma)
                 try:
                     mmd_value = float(mmd_value)
                 except (ValueError, TypeError):
