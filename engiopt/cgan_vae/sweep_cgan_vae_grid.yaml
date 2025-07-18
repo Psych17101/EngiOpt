@@ -22,9 +22,6 @@ parameters:
     values: [2]
   n_slices:
     values: [8]
-  n_views:
-    values: [3]
-  # Keep other parameters fixed at default values
   b2:
     values: [0.999]
   lr_gen:

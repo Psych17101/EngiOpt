@@ -16,7 +16,7 @@ import numpy as np
 import torch as th
 from torch import autograd
 from torch import nn
-import torch.nn.functional as F
+from torch.nn import functional
 import tqdm
 import tyro
 import wandb
@@ -113,26 +113,26 @@ def visualize_3d_designs(
 
     for i in range(n_designs):
         vol = volumes[i, 0].cpu().numpy()  # Remove channel dimension
-        D, H, W = vol.shape
+        d, h, w = vol.shape  # Use lowercase variable names
 
         # Use 'Reds_r' colormap: low=red, high=white
         cmap = plt.get_cmap("Reds_r")
 
         # XY slice (middle Z)
-        axes[i, 0].imshow(vol[D // 2, :, :], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 0].set_title(f"Design {i + 1} - XY slice (z={D // 2})")
+        axes[i, 0].imshow(vol[d // 2, :, :], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 0].set_title(f"Design {i + 1} - XY slice (z={d // 2})")
         axes[i, 0].set_xticks([])
         axes[i, 0].set_yticks([])
 
         # XZ slice (middle Y)
-        axes[i, 1].imshow(vol[:, H // 2, :], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 1].set_title(f"Design {i + 1} - XZ slice (y={H // 2})")
+        axes[i, 1].imshow(vol[:, h // 2, :], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 1].set_title(f"Design {i + 1} - XZ slice (y={h // 2})")
         axes[i, 1].set_xticks([])
         axes[i, 1].set_yticks([])
 
         # YZ slice (middle X)
-        axes[i, 2].imshow(vol[:, :, W // 2], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 2].set_title(f"Design {i + 1} - YZ slice (x={W // 2})")
+        axes[i, 2].imshow(vol[:, :, w // 2], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 2].set_title(f"Design {i + 1} - YZ slice (x={w // 2})")
         axes[i, 2].set_xticks([])
         axes[i, 2].set_yticks([])
 
@@ -147,7 +147,7 @@ def visualize_3d_designs(
             transform=axes[i, 0].transAxes,
             fontsize=8,
             verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
         )
 
     plt.tight_layout()
@@ -177,8 +177,10 @@ class Encoder(nn.Module):
         self,
         in_channels: int = 1,
         latent_dim: int = 64,
-        num_filters: list[int] = [32, 64, 128, 256, 512],
+        num_filters: list[int] | None = None,
     ):
+        if num_filters is None:
+            num_filters = [32, 64, 128, 256, 512]
         super().__init__()
         self.latent_dim = latent_dim
 
@@ -246,9 +248,11 @@ class Generator3D(nn.Module):
         latent_dim: int,
         n_conds: int,
         design_shape: tuple[int, int, int],
-        num_filters: list[int] = [512, 256, 128, 64, 32],  # Extra layer for 3D
+        num_filters: list[int] | None = None,  # Extra layer for 3D
         out_channels: int = 1,
     ):
+        if num_filters is None:
+            num_filters = [512, 256, 128, 64, 32]
         super().__init__()
         self.design_shape = design_shape
 
@@ -309,14 +313,7 @@ class Generator3D(nn.Module):
         x = th.cat([z_feat, c_feat], dim=1)  # (B, num_filters[0], 4, 4, 4)
 
         # Upsample through the main blocks
-        out = self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
-
-        # Resize to target shape if needed
-        # if out.shape[2:] != self.design_shape:
-        #    out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
-
-        return out
-
+        return self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
 
 class Discriminator3D(nn.Module):
     """3D Conditional GAN discriminator for volumetric designs.
@@ -334,9 +331,11 @@ class Discriminator3D(nn.Module):
         self,
         n_conds: int,
         in_channels: int = 1,
-        num_filters: list[int] = [32, 64, 128, 256, 512],  # Extra layer for 3D
+        num_filters: list[int] | None = None,  # Extra layer for 3D
         out_channels: int = 1,
     ):
+        if num_filters is None:
+            num_filters = [32, 64, 128, 256, 512]
         super().__init__()
 
         # Path for 3D design volume
@@ -374,7 +373,6 @@ class Discriminator3D(nn.Module):
         # Final classification layer
         self.final_conv = nn.Sequential(
             nn.Conv3d(num_filters[4], out_channels, kernel_size=2, stride=1, padding=0, bias=False),
-            # nn.Sigmoid() # Removed for WGAN-GP compatibility
         )
 
     def forward(self, x: th.Tensor, c: th.Tensor) -> th.Tensor:
@@ -403,14 +401,14 @@ class Discriminator3D(nn.Module):
         return self.final_conv(h)  # -> (B, out_channels, 1, 1, 1)
 
 
-def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):
-    """Calculates the gradient penalty loss for WGAN GP"""
+def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device, lambda_gp=20.0):  # noqa: PLR0913
+    """Calculates the gradient penalty loss for WGAN GP."""
     batch_size = real_samples.size(0)
     # Random weight term for interpolation between real and fake samples
     alpha = th.rand(batch_size, 1, 1, 1, 1, device=device)
     alpha = alpha.expand_as(real_samples)
     # Get interpolated samples
-    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(requires_grad=True)
     d_interpolates = discriminator(interpolates, conds)
     # For multi-dimensional output, take mean
     fake = th.ones_like(d_interpolates, device=device, requires_grad=False)
@@ -425,8 +423,7 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, d
     )[0]
     gradients = gradients.view(batch_size, -1)
     gradient_norm = gradients.norm(2, dim=1)
-    gradient_penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
-    return gradient_penalty
+    return lambda_gp * ((gradient_norm - 1) ** 2).mean()
 
 
 if __name__ == "__main__":
@@ -438,7 +435,8 @@ if __name__ == "__main__":
 
     # Extract 3D design space information
     design_shape = problem.design_space.shape
-    if len(design_shape) != 3:
+    DESIGN_SHAPE_LEN = 3
+    if len(design_shape) != DESIGN_SHAPE_LEN:
         raise ValueError(f"Expected 3D design shape, got {design_shape}")
 
     conditions = problem.conditions
@@ -551,7 +549,8 @@ if __name__ == "__main__":
             original_shape = designs_3d.shape
 
             # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
-            if len(original_shape) == 4:
+            CHANNEL_DIM = 4
+            if len(original_shape) == CHANNEL_DIM:
                 designs_3d = designs_3d.unsqueeze(1)  # (B, 1, D, H, W)
 
             condition_data = data[1:]
@@ -563,7 +562,6 @@ if __name__ == "__main__":
             # --- Extract a subset of XY slices from each volume ---
             n_slices = min(args.n_slices, D)  # You can set n_slices as desired
             slice_indices = th.linspace(0, D - 1, n_slices).long()
-            # Result: (B, n_slices, 1, H, W)
             slices = designs_3d[:, :, slice_indices, :, :]  # (B, 1, n_slices, H, W)
             slices = slices.permute(0, 2, 1, 3, 4)  # (B, n_slices, 1, H, W)
             slices = slices.reshape(-1, 1, H, W)  # (B*n_slices, 1, H, W)
@@ -591,17 +589,17 @@ if __name__ == "__main__":
             reconstructed = generator(z_encoded, conds)
 
             if reconstructed.shape[2:] == (51, 51, 51):
-                reconstructed = F.pad(reconstructed, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
+                reconstructed = functional.pad(reconstructed, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
 
             if designs_3d.shape[2:] == (51, 51, 51):
-                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
+                designs_3d = functional.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
             designs_3d = designs_3d.to(device)
 
             # VAE losses
             # Create a mask: 1 for real data, 0 for padding
             mask = th.ones_like(designs_3d)
             if original_shape == (51, 51, 51):
-                mask = F.pad(
+                mask = functional.pad(
                     th.ones((batch_size, 1, 51, 51, 51), device=designs_3d.device),
                     (6, 7, 6, 7, 6, 7),
                     mode="constant",
@@ -627,7 +625,7 @@ if __name__ == "__main__":
                 z_encoded_gen = reparameterize(mu.detach(), logvar.detach())
                 reconstructed_gen = generator(z_encoded_gen, conds)
                 if reconstructed_gen.shape[2:] == (51, 51, 51):
-                    reconstructed_gen = F.pad(reconstructed_gen, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
+                    reconstructed_gen = functional.pad(reconstructed_gen, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
                 recon_loss_gen = reconstruction_loss(reconstructed_gen, designs_3d)
 
                 # GAN loss for generator
@@ -649,7 +647,7 @@ if __name__ == "__main__":
                 z_random = th.randn((batch_size, args.latent_dim), device=device)
                 fake_designs = generator(z_random, conds)
                 if fake_designs.shape[2:] == (51, 51, 51):
-                    fake_designs = F.pad(fake_designs, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
+                    fake_designs = functional.pad(fake_designs, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
                 fake_validity_random = discriminator(fake_designs.detach(), conds_expanded)
                 # Wasserstein loss
                 d_loss = -(real_validity.mean() - (fake_validity.mean() + fake_validity_random.mean()) / 2)

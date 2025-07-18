@@ -11,7 +11,6 @@ from dataclasses import dataclass
 import os
 import random
 import time
-from typing import Optional
 
 from engibench.utils.all_problems import BUILTIN_PROBLEMS
 import matplotlib.pyplot as plt
@@ -19,13 +18,18 @@ import numpy as np
 import torch as th
 from torch import autograd
 from torch import nn
-import torch.nn.functional as F
+from torch.nn import functional
 import tqdm
 import tyro
 import wandb
 
 from engiopt.metrics import dpp_diversity
 from engiopt.metrics import mmd
+
+# --- PLR2004: Replace magic value 2 with a constant ---
+SLICE_AXIS_W = 2
+DESIGN_SHAPE_LEN = 3
+CHANNEL_DIM = 4
 
 
 @dataclass
@@ -83,7 +87,7 @@ class Args:
 
 
 def extract_random_slices(
-    volumes: th.Tensor, axis: int, n_slices: Optional[int] = None, target_size: int = 64
+    volumes: th.Tensor, axis: int, n_slices: int | None = None
 ) -> tuple[th.Tensor, th.Tensor]:
     """Extract random slices from 3D volumes and resize to consistent dimensions.
 
@@ -91,52 +95,50 @@ def extract_random_slices(
         volumes: (B, C, D, H, W) tensor of 3D volumes
         axis: 0=D, 1=H, 2=W (which spatial dimension to slice along)
         n_slices: Optional number of slices to extract per volume
-        target_size: Target size for output slices (default 64 for 64x64)
     """
-    B, C, D, H, W = volumes.shape
+    b, c, d, h, w = volumes.shape  # Use lowercase variable names
 
     if axis == 0:  # XY slices (slice along D dimension)
-        if n_slices is None or n_slices >= D:
-            # Extract all slices
-            positions = th.arange(D, device=volumes.device, dtype=th.float32)
-            positions = positions / max(D - 1, 1)  # Avoid division by zero
-            slices = volumes.permute(0, 2, 1, 3, 4).reshape(B * D, C, H, W)
-            positions = positions.repeat(B)
+        if n_slices is None or n_slices >= d:
+            positions = th.arange(d, device=volumes.device, dtype=th.float32)
+            positions = positions / max(d - 1, 1)  # Avoid division by zero
+            slices = volumes.permute(0, 2, 1, 3, 4).reshape(b * d, c, h, w)
+            positions = positions.repeat(b)
         else:
             # Sample random slices efficiently
-            pos_indices = th.randint(0, D, (B, n_slices), device=volumes.device)
-            positions = pos_indices.float() / max(D - 1, 1)
+            pos_indices = th.randint(0, d, (b, n_slices), device=volumes.device)
+            positions = pos_indices.float() / max(d - 1, 1)
 
             # Efficient extraction using advanced indexing
-            batch_indices = th.arange(B, device=volumes.device).unsqueeze(1).expand(-1, n_slices)
+            batch_indices = th.arange(b, device=volumes.device).unsqueeze(1).expand(-1, n_slices)
             slices = volumes[batch_indices.flatten(), :, pos_indices.flatten(), :, :]
             positions = positions.flatten()
 
     elif axis == 1:  # XZ slices (slice along H dimension)
-        if n_slices is None or n_slices >= H:
-            positions = th.arange(H, device=volumes.device, dtype=th.float32)
-            positions = positions / max(H - 1, 1)
-            slices = volumes.permute(0, 3, 1, 2, 4).reshape(B * H, C, D, W)
-            positions = positions.repeat(B)
+        if n_slices is None or n_slices >= h:
+            positions = th.arange(h, device=volumes.device, dtype=th.float32)
+            positions = positions / max(h - 1, 1)
+            slices = volumes.permute(0, 3, 1, 2, 4).reshape(b * h, c, d, w)
+            positions = positions.repeat(b)
         else:
-            pos_indices = th.randint(0, H, (B, n_slices), device=volumes.device)
-            positions = pos_indices.float() / max(H - 1, 1)
+            pos_indices = th.randint(0, h, (b, n_slices), device=volumes.device)
+            positions = pos_indices.float() / max(h - 1, 1)
 
-            batch_indices = th.arange(B, device=volumes.device).unsqueeze(1).expand(-1, n_slices)
+            batch_indices = th.arange(b, device=volumes.device).unsqueeze(1).expand(-1, n_slices)
             slices = volumes[batch_indices.flatten(), :, :, pos_indices.flatten(), :]
             positions = positions.flatten()
 
-    elif axis == 2:  # YZ slices (slice along W dimension)
-        if n_slices is None or n_slices >= W:
-            positions = th.arange(W, device=volumes.device, dtype=th.float32)
-            positions = positions / max(W - 1, 1)
-            slices = volumes.permute(0, 4, 1, 2, 3).reshape(B * W, C, D, H)
-            positions = positions.repeat(B)
+    elif axis == SLICE_AXIS_W:  # YZ slices (slice along W dimension)
+        if n_slices is None or n_slices >= w:
+            positions = th.arange(w, device=volumes.device, dtype=th.float32)
+            positions = positions / max(w - 1, 1)
+            slices = volumes.permute(0, 4, 1, 2, 3).reshape(b * w, c, d, h)
+            positions = positions.repeat(b)
         else:
-            pos_indices = th.randint(0, W, (B, n_slices), device=volumes.device)
-            positions = pos_indices.float() / max(W - 1, 1)
+            pos_indices = th.randint(0, w, (b, n_slices), device=volumes.device)
+            positions = pos_indices.float() / max(w - 1, 1)
 
-            batch_indices = th.arange(B, device=volumes.device).unsqueeze(1).expand(-1, n_slices)
+            batch_indices = th.arange(b, device=volumes.device).unsqueeze(1).expand(-1, n_slices)
             slices = volumes[batch_indices.flatten(), :, :, :, pos_indices.flatten()]
             positions = positions.flatten()
 
@@ -169,26 +171,26 @@ def visualize_3d_designs(
 
     for i in range(n_designs):
         vol = volumes[i, 0].cpu().numpy()  # Remove channel dimension
-        D, H, W = vol.shape
+        d, h, w = vol.shape  # Use lowercase
 
         # Use 'Reds_r' colormap: low=red, high=white
         cmap = plt.get_cmap("Reds_r")
 
         # XY slice (middle Z)
-        axes[i, 0].imshow(vol[D // 2, :, :], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 0].set_title(f"Design {i + 1} - XY slice (z={D // 2})")
+        axes[i, 0].imshow(vol[d // 2, :, :], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 0].set_title(f"Design {i + 1} - XY slice (z={d // 2})")
         axes[i, 0].set_xticks([])
         axes[i, 0].set_yticks([])
 
         # XZ slice (middle Y)
-        axes[i, 1].imshow(vol[:, H // 2, :], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 1].set_title(f"Design {i + 1} - XZ slice (y={H // 2})")
+        axes[i, 1].imshow(vol[:, h // 2, :], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 1].set_title(f"Design {i + 1} - XZ slice (y={h // 2})")
         axes[i, 1].set_xticks([])
         axes[i, 1].set_yticks([])
 
         # YZ slice (middle X)
-        axes[i, 2].imshow(vol[:, :, W // 2], cmap=cmap, vmin=-1, vmax=1)
-        axes[i, 2].set_title(f"Design {i + 1} - YZ slice (x={W // 2})")
+        axes[i, 2].imshow(vol[:, :, w // 2], cmap=cmap, vmin=-1, vmax=1)
+        axes[i, 2].set_title(f"Design {i + 1} - YZ slice (x={w // 2})")
         axes[i, 2].set_xticks([])
         axes[i, 2].set_yticks([])
 
@@ -203,7 +205,7 @@ def visualize_3d_designs(
             transform=axes[i, 0].transAxes,
             fontsize=8,
             verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
         )
 
     plt.tight_layout()
@@ -229,9 +231,11 @@ class SliceGenerator3D(nn.Module):
         latent_dim: int,
         n_conds: int,
         design_shape: tuple[int, int, int],
-        num_filters: list[int] = [512, 256, 128, 64, 32],  # Extra layer for 3D
+        num_filters: list[int] | None = None,  # Extra layer for 3D
         out_channels: int = 1,
     ):
+        if num_filters is None:
+            num_filters = [512, 256, 128, 64, 32]
         super().__init__()
         self.design_shape = design_shape
 
@@ -292,14 +296,7 @@ class SliceGenerator3D(nn.Module):
         x = th.cat([z_feat, c_feat], dim=1)  # (B, num_filters[0], 4, 4, 4)
 
         # Upsample through the main blocks
-        out = self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
-
-        # Resize to target shape if needed
-        # if out.shape[2:] != self.design_shape:
-        #    out = F.interpolate(out, size=self.design_shape, mode='trilinear', align_corners=False)
-
-        return out
-
+        return self.up_blocks(x)  # -> (B, out_channels, 128, 128, 128)
 
 class SliceDiscriminator2D(nn.Module):
     """2D Discriminator for slice classification with automatic resizing.
@@ -312,10 +309,12 @@ class SliceDiscriminator2D(nn.Module):
         self,
         n_design_conds: int,
         in_channels: int = 1,
-        num_filters: list[int] = [64, 128, 256, 512],
+        num_filters: list[int] | None = None,
         out_channels: int = 1,
         target_size: int = 64,  # Add target size parameter
     ):
+        if num_filters is None:
+            num_filters = [64, 128, 256, 512]
         super().__init__()
 
         self.target_size = target_size
@@ -357,10 +356,11 @@ class SliceDiscriminator2D(nn.Module):
         """Args:
             x: (B, in_channels, H, W) input slices - can be any size
             design_conds: (B, n_design_conds, 1, 1) design conditions
-            slice_pos: (B, 1, 1, 1) normalized slice position
+            slice_pos: (B, 1, 1, 1) normalized slice position.
+
         Returns:
-            out: (B, out_channels, 1, 1) real/fake score
-        """
+            out: (B, out_channels, 1, 1) real/fake score.
+        """  # noqa: D205
         # Expand conditions to match image spatial dimensions
         all_conds = th.cat([design_conds, slice_pos], dim=1)  # (B, n_design_conds + 1, 1, 1)
         conds_expanded = all_conds.expand(-1, -1, *x.shape[2:])  # (B, n_design_conds + 1, H, W)
@@ -379,18 +379,16 @@ class SliceDiscriminator2D(nn.Module):
         return self.final_conv(h)  # (B, out_channels, 1, 1)
 
 
-def compute_gradient_penalty(
+def compute_gradient_penalty(  # noqa: PLR0913
     discriminator, real_samples, fake_samples, real_conds, fake_conds, real_pos, fake_pos, device, lambda_gp=10.0
 ):
-    """Calculates the gradient penalty loss for WGAN GP"""
-    import torch as th
-
+    """Calculates the gradient penalty loss for WGAN GP."""
     # Random weight term for interpolation between real and fake samples
     alpha = th.rand(real_samples.size(0), 1, 1, 1, device=device)
     alpha = alpha.expand_as(real_samples)
 
     # Get interpolated samples
-    interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad_(True)
+    interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad_(requires_grad=True)
 
     # Interpolate conditions between real and fake
     alpha_cond = th.rand(real_conds.size(0), 1, 1, 1, device=device)
@@ -417,8 +415,7 @@ def compute_gradient_penalty(
 
     # Calculate gradient penalty
     gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = lambda_gp * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-    return gradient_penalty
+    return lambda_gp * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
 
 
 if __name__ == "__main__":
@@ -430,7 +427,7 @@ if __name__ == "__main__":
 
     # Extract 3D design space information
     design_shape = problem.design_space.shape  # Should be (D, H, W) for 3D
-    if len(design_shape) != 3:
+    if len(design_shape) != DESIGN_SHAPE_LEN:
         raise ValueError(f"Expected 3D design shape, got {design_shape}")
 
     conditions = problem.conditions
@@ -510,9 +507,9 @@ if __name__ == "__main__":
     optimizer_generator = th.optim.Adam(slice_generator.parameters(), lr=args.lr_gen, betas=(args.b1, args.b2))
 
     optimizer_discriminators = {}
-    for axis_name in slice_discriminators:
+    for axis_name, disc in slice_discriminators.items():
         optimizer_discriminators[axis_name] = th.optim.Adam(
-            slice_discriminators[axis_name].parameters(), lr=args.lr_disc, betas=(args.b1, args.b2)
+            disc.parameters(), lr=args.lr_disc, betas=(args.b1, args.b2)
         )
 
     @th.no_grad()
@@ -559,12 +556,12 @@ if __name__ == "__main__":
             designs_3d = batch[0]  # (B, D, H, W)
 
             # Add channel dimension: (B, D, H, W) -> (B, 1, D, H, W)
-            if len(designs_3d.shape) == 4:
+            if len(designs_3d.shape) == CHANNEL_DIM:
                 designs_3d = designs_3d.unsqueeze(1)  # (B, 1, D, H, W)
 
             # Pad to (B, 1, 64, 64, 64) if needed
             if designs_3d.shape[2:] == (51, 51, 51):
-                designs_3d = F.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
+                designs_3d = functional.pad(designs_3d, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
 
             condition_data = batch[1:]  # List of condition tensors
             conds = th.stack(condition_data, dim=1)  # (B, n_conds)
@@ -622,7 +619,7 @@ if __name__ == "__main__":
                     fake_volumes: dict[str, th.Tensor] = {"generated": fake_volumes_tensor}
 
                     if fake_volumes_tensor.shape[2:] == (51, 51, 51):
-                        fake_volumes_tensor = F.pad(fake_volumes_tensor, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
+                        fake_volumes_tensor = functional.pad(fake_volumes_tensor, (6, 7, 6, 7, 6, 7), mode="constant", value=0)
 
                     axis_idx = {"xy": 0, "xz": 1, "yz": 2}[axis_name]
 
@@ -694,7 +691,7 @@ if __name__ == "__main__":
             # -----------------
             #  Train Generator
             # -----------------
-            for gen_iter in range(args.gen_iters):
+            for _gen_iter in range(args.gen_iters):
                 optimizer_generator.zero_grad()
 
                 # Sample latent vector (Line 17)
@@ -825,7 +822,7 @@ if __name__ == "__main__":
             print("Saving SliceGAN models...")
 
             # Save generators
-            for axis_name, generator in slice_discriminators.items():
+            for _axis_name in slice_discriminators:
                 ckpt_gen = {
                     "epoch": epoch,
                     "batches_done": epoch * len(dataloader) + len(dataloader) - 1,

@@ -88,7 +88,7 @@ if __name__ == "__main__":
     ckpt_path = os.path.join(artifact_dir, "generator_3d.pth")
     ckpt = th.load(ckpt_path, map_location=th.device(device))
     # Safer debug output
-    for key in ckpt.keys():
+    for key in ckpt:
         print("Checkpoint key:", key)
     model = Generator3D(
         latent_dim=run.config["latent_dim"], n_conds=len(problem.conditions), design_shape=problem.design_space.shape
