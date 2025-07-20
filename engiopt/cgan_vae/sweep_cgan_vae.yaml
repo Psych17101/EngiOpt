@@ -51,10 +51,6 @@ parameters:
     distribution: uniform
     min: 0.5
     max: 2.0
-  n_views:
-    distribution: int_uniform
-    min: 1
-    max: 5
   n_slices:
     distribution: int_uniform
     min: 3

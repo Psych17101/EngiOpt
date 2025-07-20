@@ -19,7 +19,7 @@ parameters:
   lr_disc:
     values: [0.00005, 0.0001, 0.0002, 0.0004, 0.0008]
   lr_gen:
-    values: [0.00005, 0.0001, 0.0002, 0.0004, 0.0008, 0.001, 0.002, 0.005]
+    values: [0.0003, 0.00035, 0.0004, 0.00045]
   n_epochs:
-    values: [150, 300, 450, 600]
+    values: [500]
 program: /cluster/home/chatterer/SemesterProject/projects/EngiOpt/engiopt/cgan_cnn_3d/cgan_cnn_3d.py

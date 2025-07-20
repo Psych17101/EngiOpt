@@ -15,7 +15,7 @@ parameters:
   batch_size:
     values: [10, 8, 6]
   n_epochs:
-    values: [450, 400, 350]
+    values: [300]
   b1:
     values: [0.35, 0.45, 0.55]
   b2:

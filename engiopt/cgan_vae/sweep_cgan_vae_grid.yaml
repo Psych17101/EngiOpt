@@ -32,4 +32,6 @@ parameters:
     values: [0.01]
   recon_weight:
     values: [1.0]
+  n_epochs:
+    values: [350]
 program: /cluster/home/chatterer/SemesterProject/projects/EngiOpt/engiopt/cgan_vae/cgan_vae.py
