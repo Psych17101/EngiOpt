@@ -613,7 +613,6 @@ if __name__ == "__main__":
             fake_losses = {}
 
             for disc_iter in range(args.discrim_iters):  # n_D from algorithm
-                
                 for axis_name, discriminator in slice_discriminators.items():
                     optimizer_discriminators[axis_name].zero_grad()
 
@@ -741,11 +740,32 @@ if __name__ == "__main__":
             # Compute MMD and DPP diversity every 100 batches
             mmd_value = None
             dpp_value = None
-            if i % 100 == 0:
+            STEPS = 100
+            if i % STEPS == 0:
+                # For MMD, compare current batch
                 gen_np = fake_volumes_tensor.detach().cpu().numpy().reshape(fake_volumes_tensor.size(0), -1)
                 real_np = designs_3d.detach().cpu().numpy().reshape(designs_3d.size(0), -1)
                 mmd_value = mmd(gen_np, real_np, sigma=args.mmd_sigma)
-                dpp_value = dpp_diversity(gen_np, sigma=args.dpp_sigma)
+                # For DPP, generate multiple diverse samples with different random noise
+                slice_generator.eval()
+                with th.no_grad():
+                    n_diversity_samples = 50  # Generate more samples for diversity calculation
+                    diversity_volumes = []
+                    for _ in range(n_diversity_samples // batch_size + 1):
+                        # Use different random noise each time
+                        z_diverse = th.randn((min(batch_size, n_diversity_samples - len(diversity_volumes) * batch_size), args.latent_dim), device=device)
+                        # Use same conditions for fair comparison
+                        conds_diverse = conds[:z_diverse.size(0)]
+                        diverse_vol = slice_generator(z_diverse, conds_diverse.reshape(-1, n_conds, 1, 1, 1))
+                        diversity_volumes.append(diverse_vol.detach().cpu().numpy())
+                        if len(diversity_volumes) * batch_size >= n_diversity_samples:
+                            break
+                    # Concatenate all diverse samples
+                    all_diverse_volumes = np.concatenate(diversity_volumes, axis=0)[:n_diversity_samples]
+                    diverse_np = all_diverse_volumes.reshape(all_diverse_volumes.shape[0], -1)
+                    # Compute DPP on the diverse set
+                    dpp_value = dpp_diversity(diverse_np, sigma=args.dpp_sigma)
+                slice_generator.train()
                 try:
                     mmd_value = float(mmd_value)
                 except (ValueError, TypeError):
@@ -753,7 +773,11 @@ if __name__ == "__main__":
                 if mmd_value is not None:
                     mmd_values.append(mmd_value)
                 if dpp_value is not None:
-                    dpp_values.append(dpp_value)
+                    if i > STEPS:
+                        dpp_values.append(dpp_value)
+                    else:
+                        dpp_value = 0
+                        dpp_values.append(dpp_value)
 
             # ----------
             #  Logging
