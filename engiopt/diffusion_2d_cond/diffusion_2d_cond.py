@@ -437,9 +437,10 @@ if __name__ == "__main__":
                     }
 
                     th.save(ckpt_model, "model.pth")
-                    artifact_model = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
-                    artifact_model.add_file("model.pth")
+                    if args.track:
+                        artifact_model = wandb.Artifact(f"{args.problem_id}_{args.algo}_model", type="model")
+                        artifact_model.add_file("model.pth")
 
-                    wandb.log_artifact(artifact_model, aliases=[f"seed_{args.seed}"])
+                        wandb.log_artifact(artifact_model, aliases=[f"seed_{args.seed}"])
 
     wandb.finish()
