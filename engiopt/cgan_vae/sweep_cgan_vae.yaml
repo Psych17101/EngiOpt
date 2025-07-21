@@ -55,12 +55,14 @@ parameters:
     distribution: int_uniform
     min: 3
     max: 9
-  gen_iters:
-    distribution: int_uniform
-    min: 1
-    max: 2
-  discrim_iters:
-    distribution: int_uniform
-    min: 1
-    max: 2
+    gen_iters:
+      distribution: categorical
+      values:
+        - 1
+        - 2
+    discrim_iters:
+      distribution: categorical
+      values:
+        - 1
+        - 2
 program: /cluster/home/chatterer/SemesterProject/projects/EngiOpt/engiopt/cgan_vae/cgan_vae.py

@@ -1,4 +1,4 @@
-"""Evaluation for the CGAN 3D w/ CNN."""
+"""Evaluation for the Multiview VAE cGAN 3D."""
 
 from __future__ import annotations
 

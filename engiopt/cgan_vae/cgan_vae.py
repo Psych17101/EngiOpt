@@ -2,6 +2,7 @@
 
 Created by Christophe Hatterer
 Based on https://github.com/bryonkucharski/Multiview-3D-VAE-GAN
+Algorithm Based off: https://arxiv.org/pdf/1512.09300
 """
 
 from __future__ import annotations

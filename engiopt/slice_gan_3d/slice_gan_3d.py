@@ -612,12 +612,12 @@ if __name__ == "__main__":
             real_losses = {}
             fake_losses = {}
 
-            for disc_iter in range(args.discrim_iters):  # This should be n_D from algorithm
-                # For each axis a = 1, 2, 3 (Line 7)
+            for disc_iter in range(args.discrim_iters):  # n_D from algorithm
+                
                 for axis_name, discriminator in slice_discriminators.items():
                     optimizer_discriminators[axis_name].zero_grad()
 
-                    # Sample latent vector (Line 5) - MOVED INSIDE THE AXIS LOOP
+                    # Sample latent vector 
                     z = th.randn((batch_size, args.latent_dim), device=device)
                     fake_volumes_tensor = slice_generator(z, conds_expanded)
                     fake_volumes: dict[str, th.Tensor] = {"generated": fake_volumes_tensor}
@@ -647,7 +647,7 @@ if __name__ == "__main__":
                     slice_positions_dict[axis_name] = real_positions_tensor
                     slice_conds_dict[axis_name] = real_slice_conds
 
-                    # Extract slices from fake data (Line 9)
+                    # Extract slices from fake data
                     fake_slices, fake_positions = extract_random_slices(
                         fake_volumes_tensor, axis=axis_idx, n_slices=n_slices
                     )
@@ -700,14 +700,13 @@ if __name__ == "__main__":
             for _gen_iter in range(args.gen_iters):
                 optimizer_generator.zero_grad()
 
-                # Sample latent vector (Line 17)
+                # Sample latent vector
                 z = th.randn((batch_size, args.latent_dim), device=device)
-                # Generate 3D volume (Line 18)
+                # Generate 3D volume
                 fake_volumes_tensor = slice_generator(z, conds_expanded)
                 fake_volumes = {"generated": fake_volumes_tensor}  # Or appropriate dict key
 
                 total_g_loss = th.tensor(0.0, device=device, requires_grad=True)
-                # For each axis a = 1, 2, 3 (Line 19)
                 for axis_name, discriminator in slice_discriminators.items():
                     axis_idx = {"xy": 0, "xz": 1, "yz": 2}[axis_name]
 
@@ -719,7 +718,7 @@ if __name__ == "__main__":
                     elif axis_name == "yz":
                         n_slices = max(1, int(args.slice_sampling_rate * fake_volumes_tensor.shape[4]))
 
-                    # Extract slices from generated volume (Line 21)
+                    # Extract slices from generated volume
                     fake_slices, fake_positions = extract_random_slices(
                         fake_volumes_tensor, axis=axis_idx, n_slices=n_slices
                     )
@@ -729,13 +728,13 @@ if __name__ == "__main__":
                     fake_conds_formatted = fake_slice_conds.unsqueeze(-1).unsqueeze(-1)
                     fake_pos_formatted = fake_positions.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
 
-                    # Generator loss (Line 22)
+                    # Generator loss
                     output = discriminator(fake_slices, fake_conds_formatted, fake_pos_formatted)
                     g_loss_axis = -output.mean()  # Negative because we want to maximize discriminator output
 
                     total_g_loss = total_g_loss + g_loss_axis
 
-                # Update generator parameters (Line 23)
+                # Update generator parameters
                 total_g_loss.backward()
                 optimizer_generator.step()
 
