@@ -1,24 +1,12 @@
 method: bayes
 metric:
-  name: dpp
+  name: log_dpp
   goal: maximize
 early_terminate:
   type: hyperband
-  max_iter: 7000
+  max_iter: 500
   eta: 3
 parameters:
-  algo:
-    distribution: categorical
-    values:
-    - cgan_cnn_3d
-  b1:
-    distribution: uniform
-    max: 1
-    min: 0.25
-  b2:
-    distribution: uniform
-    max: 0.998
-    min: 0.4995
   batch_size:
     distribution: int_uniform
     max: 16
@@ -28,24 +16,25 @@ parameters:
     max: 128
     min: 32
   lr_disc:
-    distribution: uniform
-    max: 0.0008
+    distribution: log_uniform_values
     min: 0.00005
+    max: 0.001
   lr_gen:
-    distribution: uniform
-    max: 0.005
-    min: 0.00005
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.003
   n_epochs:
     distribution: int_uniform
-    max: 600
-    gen_iters:
-      distribution: categorical
-      values:
-        - 1
-        - 2
-    discrim_iters:
-      distribution: categorical
-      values:
-        - 1
-        - 2
+    min: 150
+    max: 500
+  gen_iters:
+    distribution: categorical
+    values:
+      - 1
+      - 2
+  discrim_iters:
+    distribution: categorical
+    values:
+      - 1
+      - 2
 program: /cluster/home/chatterer/SemesterProject/projects/EngiOpt/engiopt/cgan_cnn_3d/cgan_cnn_3d.py

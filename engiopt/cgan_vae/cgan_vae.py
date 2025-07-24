@@ -163,7 +163,9 @@ def visualize_3d_designs(
 
 
 def reparameterize(mu: th.Tensor, logvar: th.Tensor) -> th.Tensor:
-    """Reparameterization trick for VAE."""
+    """Reparameterization trick for VAE with numerical stability."""
+    # Clamp logvar to prevent extreme values
+    logvar = th.clamp(logvar, min=-20, max=20)
     std = th.exp(0.5 * logvar)
     eps = th.randn_like(std)
     return mu + eps * std
@@ -173,7 +175,9 @@ def kl_divergence(
     mu: th.Tensor,
     logvar: th.Tensor,
 ) -> th.Tensor:
-    """Calculate KL divergence for VAE."""
+    """Calculate KL divergence for VAE with numerical stability."""
+    # Clamp logvar to prevent extreme values
+    logvar = th.clamp(logvar, min=-20, max=20)
     return -0.5 * th.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
 
@@ -622,6 +626,7 @@ if __name__ == "__main__":
             optimizer_encoder.zero_grad()
             E_loss = args.recon_weight * recon_loss + args.kl_weight * mvkl_loss
             E_loss.backward(retain_graph=True)
+            th.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
             optimizer_encoder.step()
 
             # ==================
@@ -640,6 +645,7 @@ if __name__ == "__main__":
                 g_loss_ws = -discriminator(reconstructed_gen, conds_expanded).mean()
                 g_loss = g_loss_ws + args.recon_weight * recon_loss_gen
                 g_loss.backward()
+                th.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
                 optimizer_generator.step()
 
             # ==================
@@ -663,6 +669,7 @@ if __name__ == "__main__":
                 )
                 d_loss += gradient_penalty
                 d_loss.backward()
+                th.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
                 optimizer_discriminator.step()
 
             # --- Discriminator accuracy logging ---
@@ -676,46 +683,48 @@ if __name__ == "__main__":
             mmd_value = None
             dpp_value = None
             STEPS = 100
-            if i % STEPS == 0:
-                # For MMD, compare current batch
-                gen_np = reconstructed.detach().cpu().numpy().reshape(reconstructed.size(0), -1)
-                real_np = designs_3d.detach().cpu().numpy().reshape(designs_3d.size(0), -1)
-                mmd_value = mmd(gen_np, real_np, sigma=args.mmd_sigma)
-                # For DPP, generate multiple diverse samples with different random noise
+            if i % STEPS/2 == 0:
+                # Generate multiple diverse samples for both MMD and DPP calculation
                 generator.eval()
                 encoder.eval()
                 with th.no_grad():
-                    n_diversity_samples = 50  # Generate more samples for diversity calculation
-                    diversity_volumes = []
-                    for _ in range(n_diversity_samples // batch_size + 1):
-                        # Use different random noise each time
-                        z_diverse = th.randn((min(batch_size, n_diversity_samples - len(diversity_volumes) * batch_size), args.latent_dim, 1, 1, 1), device=device)
-                        # Use same conditions for fair comparison
-                        conds_diverse = conds[:z_diverse.size(0)]
-                        diverse_vol = generator(z_diverse, conds_diverse.reshape(-1, n_conds, 1, 1, 1))
-                        diversity_volumes.append(diverse_vol.detach().cpu().numpy())
-                        if len(diversity_volumes) * batch_size >= n_diversity_samples:
+                    n_samples = 50  # Generate more samples for meaningful comparison
+                    # Generate samples for comparison
+                    generated_volumes = []
+                    real_volumes = []
+                    for _ in range(n_samples // batch_size + 1):
+                        current_batch_size = min(batch_size, n_samples - len(generated_volumes) * batch_size)
+                        if current_batch_size <= 0:
                             break
-                    # Concatenate all diverse samples
-                    all_diverse_volumes = np.concatenate(diversity_volumes, axis=0)[:n_diversity_samples]
-                    diverse_np = all_diverse_volumes.reshape(all_diverse_volumes.shape[0], -1)
-                    # Compute DPP on the diverse set
-                    dpp_value = dpp_diversity(diverse_np, sigma=args.dpp_sigma)
+                        # Generate diverse samples with different random noise
+                        z_diverse = th.randn((current_batch_size, args.latent_dim, 1, 1, 1), device=device)
+                        # Use same conditions for fair comparison
+                        conds_diverse = conds[:current_batch_size]
+                        diverse_vol = generator(z_diverse, conds_diverse.reshape(-1, n_conds, 1, 1, 1))
+                        generated_volumes.append(diverse_vol.detach().cpu().numpy())
+                        # Also collect real samples for MMD comparison
+                        real_vol = designs_3d[:current_batch_size]
+                        real_volumes.append(real_vol.detach().cpu().numpy())
+                    # Concatenate all samples
+                    all_generated_volumes = np.concatenate(generated_volumes, axis=0)[:n_samples]
+                    all_real_volumes = np.concatenate(real_volumes, axis=0)[:n_samples]
+                    # Reshape for metric calculations
+                    gen_np = all_generated_volumes.reshape(all_generated_volumes.shape[0], -1)
+                    real_np = all_real_volumes.reshape(all_real_volumes.shape[0], -1)
+                    # Compute MMD between generated and real sample sets
+                    mmd_value = mmd(gen_np, real_np, sigma=args.mmd_sigma)
+                    # Compute DPP on the generated set
+                    dpp_value = dpp_diversity(gen_np, sigma=args.dpp_sigma)
                 generator.train()
                 encoder.train()
                 try:
                     mmd_value = float(mmd_value)
                 except (ValueError, TypeError):
                     mmd_value = float("nan")
-
                 if mmd_value is not None:
                     mmd_values.append(mmd_value)
                 if dpp_value is not None:
-                    if i > STEPS:
-                        dpp_values.append(dpp_value)
-                    else:
-                        dpp_value = 0
-                        dpp_values.append(dpp_value)
+                    dpp_values.append(dpp_value)
 
             # ----------
             #  Logging
@@ -742,6 +751,8 @@ if __name__ == "__main__":
                     log_dict["mmd"] = mmd_value
                 if dpp_value is not None:
                     log_dict["dpp_diversity"] = dpp_value
+                    # Log the natural logarithm of DPP for optimization
+                    log_dict["log_dpp"] = np.log(max(dpp_value, np.finfo(np.float64).tiny))
 
                 wandb.log(log_dict)
 
@@ -801,8 +812,29 @@ if __name__ == "__main__":
             final_mmd = np.mean(mmd_values[-10:])
             wandb.log({"mmd": final_mmd, "epoch": args.n_epochs})
         if dpp_values:
-            final_dpp = np.mean(dpp_values[-10:])
+            # Use last 100 values if available, otherwise use all
+            window = 100 if len(dpp_values) >= 500 else len(dpp_values[-400:])  # noqa: PLR2004
+            recent_dpp_values = np.array(dpp_values[-window:])
+            # Filter outliers using IQR method
+            q1 = np.percentile(recent_dpp_values, 25)
+            q3 = np.percentile(recent_dpp_values, 75)
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            # Keep only values within the IQR bounds
+            filtered_dpp_values = recent_dpp_values[
+                (recent_dpp_values >= lower_bound) & (recent_dpp_values <= upper_bound)
+            ]
+            # Use filtered values if we have enough, otherwise use original
+            if len(filtered_dpp_values) >= max(10, len(recent_dpp_values) * 0.5):  # Keep at least 50% or 10 values
+                final_dpp = np.mean(filtered_dpp_values)
+                print(f"Filtered {len(recent_dpp_values) - len(filtered_dpp_values)} outliers from DPP values")
+            else:
+                final_dpp = np.mean(recent_dpp_values)
+                print("Not enough values after outlier filtering, using original mean")
             wandb.log({"dpp": final_dpp, "epoch": args.n_epochs})
+            # Also log the final log_dpp value - handle machine precision values
+            wandb.log({"log_dpp": np.log(max(final_dpp, np.finfo(np.float64).tiny)), "epoch": args.n_epochs})
         wandb.finish()
 
     print("Multiview 3D VAE-GAN training completed!")
