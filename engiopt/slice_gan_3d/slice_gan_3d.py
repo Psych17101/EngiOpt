@@ -79,7 +79,7 @@ class Args:
     """Discriminator update"""
     gen_iters: int = 1
     """Generator update"""
-    slice_sampling_rate: float = 0.3
+    slice_sampling_ratio: float = 0.3
     """Fraction of slices to sample during training"""
     use_all_axes: bool = True
     """Use slices from all three axes (XY, XZ, YZ)"""
@@ -577,9 +577,9 @@ if __name__ == "__main__":
             batch_size, _, D, H, W = designs_3d.shape
 
             # Calculate number of slices to sample per axis
-            n_slices_xy = max(1, int(args.slice_sampling_rate * D))
-            n_slices_xz = max(1, int(args.slice_sampling_rate * H))
-            n_slices_yz = max(1, int(args.slice_sampling_rate * W))
+            n_slices_xy = max(1, int(args.slice_sampling_ratio * D))
+            n_slices_xz = max(1, int(args.slice_sampling_ratio * H))
+            n_slices_yz = max(1, int(args.slice_sampling_ratio * W))
 
             # Sample slices from the 3D designs
             real_slices = {}
@@ -633,11 +633,11 @@ if __name__ == "__main__":
 
                     # Determine number of slices for this axis
                     if axis_name == "xy":
-                        n_slices = max(1, int(args.slice_sampling_rate * designs_3d.shape[2]))  # D
+                        n_slices = max(1, int(args.slice_sampling_ratio * designs_3d.shape[2]))  # D
                     elif axis_name == "xz":
-                        n_slices = max(1, int(args.slice_sampling_rate * designs_3d.shape[3]))  # H
+                        n_slices = max(1, int(args.slice_sampling_ratio * designs_3d.shape[3]))  # H
                     elif axis_name == "yz":
-                        n_slices = max(1, int(args.slice_sampling_rate * designs_3d.shape[4]))  # W
+                        n_slices = max(1, int(args.slice_sampling_ratio * designs_3d.shape[4]))  # W
 
                     # Extract slices from real data
                     real_slices_tensor, real_positions_tensor = extract_random_slices(
@@ -714,11 +714,11 @@ if __name__ == "__main__":
 
                     # Determine number of slices for this axis
                     if axis_name == "xy":
-                        n_slices = max(1, int(args.slice_sampling_rate * fake_volumes_tensor.shape[2]))
+                        n_slices = max(1, int(args.slice_sampling_ratio * fake_volumes_tensor.shape[2]))
                     elif axis_name == "xz":
-                        n_slices = max(1, int(args.slice_sampling_rate * fake_volumes_tensor.shape[3]))
+                        n_slices = max(1, int(args.slice_sampling_ratio * fake_volumes_tensor.shape[3]))
                     elif axis_name == "yz":
-                        n_slices = max(1, int(args.slice_sampling_rate * fake_volumes_tensor.shape[4]))
+                        n_slices = max(1, int(args.slice_sampling_ratio * fake_volumes_tensor.shape[4]))
 
                     # Extract slices from generated volume
                     fake_slices, fake_positions = extract_random_slices(
