@@ -37,4 +37,4 @@ parameters:
     values:
       - 1
       - 2
-program: /cluster/home/chatterer/SemesterProject/projects/EngiOpt/engiopt/cgan_cnn_3d/cgan_cnn_3d.py
+program: <YOUR_PATH_TO_ENGIOPT>/cgan_cnn_3d/cgan_cnn_3d.py

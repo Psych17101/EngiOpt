@@ -41,4 +41,4 @@ parameters:
     distribution: uniform
     min: 0.1
     max: 0.5
-program: /cluster/home/chatterer/SemesterProject/projects/EngiOpt/engiopt/slice_gan_3d/slice_gan_3d.py
+program: <YOUR_PATH_TO_ENGIOPT>/slice_gan_3d/slice_gan_3d.py

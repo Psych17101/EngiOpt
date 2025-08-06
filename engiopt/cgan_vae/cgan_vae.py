@@ -683,7 +683,7 @@ if __name__ == "__main__":
             mmd_value = None
             dpp_value = None
             STEPS = 100
-            if i % STEPS/2 == 0:
+            if i % STEPS / 2 == 0:
                 # Generate multiple diverse samples for both MMD and DPP calculation
                 generator.eval()
                 encoder.eval()
@@ -822,9 +822,7 @@ if __name__ == "__main__":
             lower_bound = q1 - 1.5 * iqr
             upper_bound = q3 + 1.5 * iqr
             # Keep only values within the IQR bounds
-            filtered_dpp_values = recent_dpp_values[
-                (recent_dpp_values >= lower_bound) & (recent_dpp_values <= upper_bound)
-            ]
+            filtered_dpp_values = recent_dpp_values[(recent_dpp_values >= lower_bound) & (recent_dpp_values <= upper_bound)]
             # Use filtered values if we have enough, otherwise use original
             if len(filtered_dpp_values) >= max(10, len(recent_dpp_values) * 0.5):  # Keep at least 50% or 10 values
                 final_dpp = np.mean(filtered_dpp_values)

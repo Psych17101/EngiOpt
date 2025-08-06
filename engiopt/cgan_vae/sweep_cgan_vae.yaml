@@ -53,4 +53,4 @@ parameters:
     values:
       - 1
       - 2
-program: /cluster/home/chatterer/SemesterProject/projects/EngiOpt/engiopt/cgan_vae/cgan_vae.py
+program: <YOUR_PATH_TO_ENGIOPT>/cgan_vae/cgan_vae.py
